@@ -15,7 +15,7 @@ function App() {
   const [preview, setPreview] = useState(null);
   const [result, setResult] = useState(null);
   const [mediaType, setMediaType] = useState('image');
-  const [coverage, setCoverage] = useState(7);
+  const [coverage, setCoverage] = useState(22);
   const [status, setStatus] = useState('idle');
   const [dragging, setDragging] = useState(false);
 
@@ -45,17 +45,69 @@ function App() {
     image.src = preview;
   };
 
-  const paintRepair = (ctx, width, height, percentage) => {
-    // Gemini's visible mark is anchored to the lower-right edge. Instead of
-    // inventing nearby texture, trim that edge and resample the retained frame.
-    // This guarantees a clean result without a copied or blurred "patch".
-    const trimX = Math.max(1, Math.round(width * (percentage / 100)));
-    const trimY = Math.max(1, Math.round(height * (percentage / 100)));
-    const source = document.createElement('canvas');
-    source.width = width; source.height = height;
-    source.getContext('2d').drawImage(ctx.canvas, 0, 0);
-    ctx.clearRect(0, 0, width, height);
-    ctx.drawImage(source, 0, 0, width - trimX, height - trimY, 0, 0, width, height);
+  const findGeminiMark = (ctx, width, height, percentage) => {
+    const image = ctx.getImageData(0, 0, width, height);
+    const startX = Math.floor(width * (1 - percentage / 100));
+    const startY = Math.floor(height * (1 - percentage / 100));
+    const zoneW = width - startX;
+    const zoneH = height - startY;
+    const seen = new Uint8Array(zoneW * zoneH);
+    const candidates = [];
+    const isBrightNeutral = (x, y) => {
+      const offset = (y * width + x) * 4;
+      const r = image.data[offset], g = image.data[offset + 1], b = image.data[offset + 2];
+      const maximum = Math.max(r, g, b), minimum = Math.min(r, g, b);
+      const luminance = r * .2126 + g * .7152 + b * .0722;
+      return luminance > 200 && maximum > 0 && (maximum - minimum) / maximum < .42;
+    };
+    for (let y = startY; y < height; y += 1) for (let x = startX; x < width; x += 1) {
+      const seed = (y - startY) * zoneW + x - startX;
+      if (seen[seed] || !isBrightNeutral(x, y)) continue;
+      const queue = [[x, y]];
+      seen[seed] = 1;
+      let pixels = 0, minX = x, maxX = x, minY = y, maxY = y;
+      for (let pointer = 0; pointer < queue.length; pointer += 1) {
+        const [cx, cy] = queue[pointer];
+        pixels += 1; minX = Math.min(minX, cx); maxX = Math.max(maxX, cx); minY = Math.min(minY, cy); maxY = Math.max(maxY, cy);
+        for (let dy = -1; dy <= 1; dy += 1) for (let dx = -1; dx <= 1; dx += 1) {
+          const nx = cx + dx, ny = cy + dy;
+          if (nx < startX || ny < startY || nx >= width || ny >= height) continue;
+          const index = (ny - startY) * zoneW + nx - startX;
+          if (!seen[index] && isBrightNeutral(nx, ny)) { seen[index] = 1; queue.push([nx, ny]); }
+        }
+      }
+      if (pixels > 32) candidates.push({ pixels, minX, maxX, minY, maxY });
+    }
+    const mark = candidates.sort((a, b) => b.pixels - a.pixels)[0];
+    if (!mark) return null;
+    const padding = Math.max(10, Math.round(Math.min(width, height) * .012));
+    return { x: Math.max(0, mark.minX - padding), y: Math.max(0, mark.minY - padding), width: Math.min(width, mark.maxX - mark.minX + 1 + padding * 2), height: Math.min(height, mark.maxY - mark.minY + 1 + padding * 2) };
+  };
+
+  const inpaintMark = (ctx, width, height, rect) => {
+    if (!rect) return;
+    const source = ctx.getImageData(0, 0, width, height);
+    let previous = new Uint8ClampedArray(source.data);
+    const next = new Uint8ClampedArray(source.data);
+    const left = rect.x, top = rect.y, right = Math.min(width - 1, rect.x + rect.width - 1), bottom = Math.min(height - 1, rect.y + rect.height - 1);
+    // Diffuse colours inward from every edge of the detected mark. This preserves
+    // surrounding texture without pasting a separate rectangular image region.
+    for (let pass = 0; pass < Math.max(rect.width, rect.height); pass += 1) {
+      for (let y = top; y <= bottom; y += 1) for (let x = left; x <= right; x += 1) {
+        const offset = (y * width + x) * 4;
+        const neighbors = [[Math.max(0, x - 1), y], [Math.min(width - 1, x + 1), y], [x, Math.max(0, y - 1)], [x, Math.min(height - 1, y + 1)]];
+        for (let channel = 0; channel < 3; channel += 1) next[offset + channel] = Math.round(neighbors.reduce((sum, [nx, ny]) => sum + previous[(ny * width + nx) * 4 + channel], 0) / neighbors.length);
+      }
+      previous = new Uint8ClampedArray(next);
+    }
+    source.data.set(previous);
+    ctx.putImageData(source, 0, 0);
+  };
+
+  const paintRepair = (ctx, width, height, percentage, rect = null) => {
+    const mark = rect || findGeminiMark(ctx, width, height, percentage);
+    inpaintMark(ctx, width, height, mark);
+    return mark;
   };
 
   const processImage = () => {
@@ -85,9 +137,10 @@ function App() {
         setResult(URL.createObjectURL(new Blob(chunks, { type: 'video/webm' })));
         setStatus('complete');
       };
+      let detectedMark = null;
       const repairFrame = () => {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        paintRepair(ctx, canvas.width, canvas.height, coverage);
+        detectedMark = paintRepair(ctx, canvas.width, canvas.height, coverage, detectedMark);
         if (!video.ended) requestAnimationFrame(repairFrame);
       };
       video.onended = () => recorder.stop();
@@ -143,7 +196,7 @@ function App() {
           </div>
           <div className="file-actions">
             <div><b>{file?.name}</b><small>{Math.max(1, Math.round((file?.size || 0) / 1024))} KB · stays on your device</small></div>
-            <label className="repair-control">Corner trim <strong>{coverage}%</strong><input aria-label="Corner trim" type="range" min="4" max="15" value={coverage} onChange={(event) => setCoverage(Number(event.target.value))} /><small>No pixel patching. Increase only if any edge of the mark remains.</small></label>
+            <label className="repair-control">Gemini mark scan <strong>{coverage}%</strong><input aria-label="Gemini mark scan area" type="range" min="15" max="35" value={coverage} onChange={(event) => setCoverage(Number(event.target.value))} /><small>Scans the lower-right area and removes only the detected sparkle.</small></label>
             {status === 'ready' && <button className="process-btn" onClick={mediaType === 'video' ? processVideo : processImage}>Remove watermark {mediaType === 'video' ? <Video size={17}/> : <Sparkles size={17}/>}</button>}
             {status === 'processing' && <button className="process-btn loading" disabled><RefreshCw size={17}/> Working</button>}
             {status === 'complete' && <button className="process-btn" onClick={download}>Download {mediaType} <Download size={17}/></button>}
