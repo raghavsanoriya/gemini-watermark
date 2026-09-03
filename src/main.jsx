@@ -15,6 +15,7 @@ function App() {
   const [preview, setPreview] = useState(null);
   const [result, setResult] = useState(null);
   const [mediaType, setMediaType] = useState('image');
+  const [coverage, setCoverage] = useState(18);
   const [status, setStatus] = useState('idle');
   const [dragging, setDragging] = useState(false);
 
@@ -37,27 +38,32 @@ function App() {
       canvas.height = image.naturalHeight;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(image, 0, 0);
-      // Gemini's visible mark typically sits in the lower-right corner. This local
-      // heuristic borrows nearby texture and softly blends it over that small area.
-      const patchW = Math.max(38, Math.round(canvas.width * .105));
-      const patchH = Math.max(38, Math.round(canvas.height * .105));
-      const x = canvas.width - patchW - Math.round(canvas.width * .018);
-      const y = canvas.height - patchH - Math.round(canvas.height * .018);
-      const sourceX = Math.max(0, x - patchW);
-      const sourceY = Math.max(0, y - patchH);
-      const texture = ctx.getImageData(sourceX, sourceY, patchW, patchH);
-      const patch = document.createElement('canvas');
-      patch.width = patchW; patch.height = patchH;
-      patch.getContext('2d').putImageData(texture, 0, 0);
-      ctx.save();
-      ctx.globalAlpha = .92;
-      ctx.filter = 'blur(1px)';
-      ctx.drawImage(patch, x, y);
-      ctx.restore();
+      paintRepair(ctx, canvas.width, canvas.height, coverage);
       setResult(canvas.toDataURL(file?.type === 'image/png' ? 'image/png' : 'image/jpeg', .96));
       setStatus('complete');
     };
     image.src = preview;
+  };
+
+  const paintRepair = (ctx, width, height, percentage) => {
+    // Keep the source safely outside the repair rectangle. The previous approach
+    // sampled adjacent pixels, which could include the left half of a wide mark.
+    const patchW = Math.min(width, Math.max(48, Math.round(width * (percentage / 100))));
+    const patchH = Math.min(height, Math.max(42, Math.round(height * Math.min(.17, percentage / 140))));
+    const insetX = Math.round(width * .018);
+    const insetY = Math.round(height * .018);
+    const x = Math.max(0, width - patchW - insetX);
+    const y = Math.max(0, height - patchH - insetY);
+    const sourceX = Math.max(0, x - patchW - Math.round(width * .025));
+    const sourceY = sourceX === 0 ? Math.max(0, y - patchH - Math.round(height * .025)) : y;
+    const donor = document.createElement('canvas');
+    donor.width = patchW; donor.height = patchH;
+    donor.getContext('2d').drawImage(ctx.canvas, sourceX, sourceY, patchW, patchH, 0, 0, patchW, patchH);
+    ctx.save();
+    ctx.globalAlpha = .96;
+    ctx.filter = 'blur(.65px)';
+    ctx.drawImage(donor, x, y);
+    ctx.restore();
   };
 
   const processImage = () => {
@@ -89,15 +95,7 @@ function App() {
       };
       const repairFrame = () => {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const patchW = Math.max(38, Math.round(canvas.width * .105));
-        const patchH = Math.max(38, Math.round(canvas.height * .105));
-        const x = canvas.width - patchW - Math.round(canvas.width * .018);
-        const y = canvas.height - patchH - Math.round(canvas.height * .018);
-        ctx.save();
-        ctx.globalAlpha = .92;
-        ctx.filter = 'blur(1px)';
-        ctx.drawImage(canvas, Math.max(0, x - patchW), Math.max(0, y - patchH), patchW, patchH, x, y, patchW, patchH);
-        ctx.restore();
+        paintRepair(ctx, canvas.width, canvas.height, coverage);
         if (!video.ended) requestAnimationFrame(repairFrame);
       };
       video.onended = () => recorder.stop();
@@ -153,6 +151,7 @@ function App() {
           </div>
           <div className="file-actions">
             <div><b>{file?.name}</b><small>{Math.max(1, Math.round((file?.size || 0) / 1024))} KB · stays on your device</small></div>
+            <label className="repair-control">Repair coverage <strong>{coverage}%</strong><input aria-label="Repair coverage" type="range" min="12" max="30" value={coverage} onChange={(event) => setCoverage(Number(event.target.value))} /><small>Use a wider zone if any part of the corner mark remains.</small></label>
             {status === 'ready' && <button className="process-btn" onClick={mediaType === 'video' ? processVideo : processImage}>Remove watermark {mediaType === 'video' ? <Video size={17}/> : <Sparkles size={17}/>}</button>}
             {status === 'processing' && <button className="process-btn loading" disabled><RefreshCw size={17}/> Working</button>}
             {status === 'complete' && <button className="process-btn" onClick={download}>Download {mediaType} <Download size={17}/></button>}
