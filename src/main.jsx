@@ -76,12 +76,19 @@ function App() {
           if (!seen[index] && isBrightNeutral(nx, ny)) { seen[index] = 1; queue.push([nx, ny]); }
         }
       }
-      if (pixels > 32) candidates.push({ pixels, minX, maxX, minY, maxY });
+      const componentWidth = maxX - minX + 1;
+      const componentHeight = maxY - minY + 1;
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+      const sizeLimit = Math.min(width, height) * .1;
+      if (pixels > 32 && componentWidth <= sizeLimit && componentHeight <= sizeLimit && centerX > width * .78 && centerY > height * .78) {
+        const distance = Math.hypot(centerX - width * .88, centerY - height * .88);
+        candidates.push({ pixels, minX, maxX, minY, maxY, points: queue, score: pixels / (1 + distance / 120) });
+      }
     }
-    const mark = candidates.sort((a, b) => b.pixels - a.pixels)[0];
+    const mark = candidates.sort((a, b) => b.score - a.score)[0];
     if (!mark) return null;
-    const padding = Math.max(10, Math.round(Math.min(width, height) * .012));
-    return { x: Math.max(0, mark.minX - padding), y: Math.max(0, mark.minY - padding), width: Math.min(width, mark.maxX - mark.minX + 1 + padding * 2), height: Math.min(height, mark.maxY - mark.minY + 1 + padding * 2) };
+    return { minX: mark.minX, maxX: mark.maxX, minY: mark.minY, maxY: mark.maxY, points: mark.points };
   };
 
   const inpaintMark = (ctx, width, height, rect) => {
@@ -89,11 +96,18 @@ function App() {
     const source = ctx.getImageData(0, 0, width, height);
     let previous = new Uint8ClampedArray(source.data);
     const next = new Uint8ClampedArray(source.data);
-    const left = rect.x, top = rect.y, right = Math.min(width - 1, rect.x + rect.width - 1), bottom = Math.min(height - 1, rect.y + rect.height - 1);
-    // Diffuse colours inward from every edge of the detected mark. This preserves
-    // surrounding texture without pasting a separate rectangular image region.
-    for (let pass = 0; pass < Math.max(rect.width, rect.height); pass += 1) {
+    const padding = Math.max(4, Math.round(Math.min(width, height) * .004));
+    const mask = new Uint8Array(width * height);
+    for (const [pointX, pointY] of rect.points) for (let dy = -padding; dy <= padding; dy += 1) for (let dx = -padding; dx <= padding; dx += 1) {
+      const x = pointX + dx, y = pointY + dy;
+      if (x >= 0 && y >= 0 && x < width && y < height && dx * dx + dy * dy <= padding * padding) mask[y * width + x] = 1;
+    }
+    const left = Math.max(0, rect.minX - padding), top = Math.max(0, rect.minY - padding);
+    const right = Math.min(width - 1, rect.maxX + padding), bottom = Math.min(height - 1, rect.maxY + padding);
+    // Diffuse colours only through the icon-shaped mask, never a full rectangle.
+    for (let pass = 0; pass < padding * 3; pass += 1) {
       for (let y = top; y <= bottom; y += 1) for (let x = left; x <= right; x += 1) {
+        if (!mask[y * width + x]) continue;
         const offset = (y * width + x) * 4;
         const neighbors = [[Math.max(0, x - 1), y], [Math.min(width - 1, x + 1), y], [x, Math.max(0, y - 1)], [x, Math.min(height - 1, y + 1)]];
         for (let channel = 0; channel < 3; channel += 1) next[offset + channel] = Math.round(neighbors.reduce((sum, [nx, ny]) => sum + previous[(ny * width + nx) * 4 + channel], 0) / neighbors.length);
