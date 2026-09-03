@@ -15,7 +15,7 @@ function App() {
   const [preview, setPreview] = useState(null);
   const [result, setResult] = useState(null);
   const [mediaType, setMediaType] = useState('image');
-  const [coverage, setCoverage] = useState(18);
+  const [coverage, setCoverage] = useState(7);
   const [status, setStatus] = useState('idle');
   const [dragging, setDragging] = useState(false);
 
@@ -46,24 +46,16 @@ function App() {
   };
 
   const paintRepair = (ctx, width, height, percentage) => {
-    // Keep the source safely outside the repair rectangle. The previous approach
-    // sampled adjacent pixels, which could include the left half of a wide mark.
-    const patchW = Math.min(width, Math.max(48, Math.round(width * (percentage / 100))));
-    const patchH = Math.min(height, Math.max(42, Math.round(height * Math.min(.17, percentage / 140))));
-    const insetX = Math.round(width * .018);
-    const insetY = Math.round(height * .018);
-    const x = Math.max(0, width - patchW - insetX);
-    const y = Math.max(0, height - patchH - insetY);
-    const sourceX = Math.max(0, x - patchW - Math.round(width * .025));
-    const sourceY = sourceX === 0 ? Math.max(0, y - patchH - Math.round(height * .025)) : y;
-    const donor = document.createElement('canvas');
-    donor.width = patchW; donor.height = patchH;
-    donor.getContext('2d').drawImage(ctx.canvas, sourceX, sourceY, patchW, patchH, 0, 0, patchW, patchH);
-    ctx.save();
-    ctx.globalAlpha = .96;
-    ctx.filter = 'blur(.65px)';
-    ctx.drawImage(donor, x, y);
-    ctx.restore();
+    // Gemini's visible mark is anchored to the lower-right edge. Instead of
+    // inventing nearby texture, trim that edge and resample the retained frame.
+    // This guarantees a clean result without a copied or blurred "patch".
+    const trimX = Math.max(1, Math.round(width * (percentage / 100)));
+    const trimY = Math.max(1, Math.round(height * (percentage / 100)));
+    const source = document.createElement('canvas');
+    source.width = width; source.height = height;
+    source.getContext('2d').drawImage(ctx.canvas, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(source, 0, 0, width - trimX, height - trimY, 0, 0, width, height);
   };
 
   const processImage = () => {
@@ -145,13 +137,13 @@ function App() {
           <div className="preview-shell">
             {mediaType === 'video' ? <video src={result || preview} controls playsInline aria-label="Selected video preview" /> : <img src={result || preview} alt={result ? "Corner-repaired image preview" : "Selected image preview"} />}
             {status !== 'complete' && <div className="gemini-mark">✦</div>}
-            {status === 'processing' && <div className="processing"><span></span><b>Cleaning {mediaType}…</b><small>{mediaType === 'video' ? 'Repairing frames locally — keep this tab open' : 'Finding the visible corner mark'}</small></div>}
-            {status === 'complete' && <div className="done"><Check size={16}/> {mediaType === 'video' ? 'Video repaired locally' : 'Corner repaired locally'}</div>}
+            {status === 'processing' && <div className="processing"><span></span><b>Cleaning {mediaType}…</b><small>{mediaType === 'video' ? 'Trimming the marked edge frame by frame — keep this tab open' : 'Trimming the marked lower-right edge'}</small></div>}
+            {status === 'complete' && <div className="done"><Check size={16}/> {mediaType === 'video' ? 'Video edge cleaned locally' : 'Image edge cleaned locally'}</div>}
             <button className="remove-file" aria-label="Remove selected file" onClick={reset}><X size={17}/></button>
           </div>
           <div className="file-actions">
             <div><b>{file?.name}</b><small>{Math.max(1, Math.round((file?.size || 0) / 1024))} KB · stays on your device</small></div>
-            <label className="repair-control">Repair coverage <strong>{coverage}%</strong><input aria-label="Repair coverage" type="range" min="12" max="30" value={coverage} onChange={(event) => setCoverage(Number(event.target.value))} /><small>Use a wider zone if any part of the corner mark remains.</small></label>
+            <label className="repair-control">Corner trim <strong>{coverage}%</strong><input aria-label="Corner trim" type="range" min="4" max="15" value={coverage} onChange={(event) => setCoverage(Number(event.target.value))} /><small>No pixel patching. Increase only if any edge of the mark remains.</small></label>
             {status === 'ready' && <button className="process-btn" onClick={mediaType === 'video' ? processVideo : processImage}>Remove watermark {mediaType === 'video' ? <Video size={17}/> : <Sparkles size={17}/>}</button>}
             {status === 'processing' && <button className="process-btn loading" disabled><RefreshCw size={17}/> Working</button>}
             {status === 'complete' && <button className="process-btn" onClick={download}>Download {mediaType} <Download size={17}/></button>}
@@ -163,7 +155,7 @@ function App() {
     </section>
 
     <section className="proof wrap" id="privacy">
-      <div className="proof-copy"><div className="eyebrow"><span></span> Built for the small stuff</div><h2>A clean corner.<br/>A <em>finished</em> frame.</h2><p>GemClean treats the familiar lower-right sparkle as a local frame repair — for still images and browser-processed video.</p><div className="privacy-note"><LockKeyhole size={18}/><div><b>Private by design</b><small>Your media stays in your browser. There are no credits, accounts, or cloud upload quotas.</small></div></div></div>
+      <div className="proof-copy"><div className="eyebrow"><span></span> Built for the small stuff</div><h2>A clean corner.<br/>A <em>finished</em> frame.</h2><p>GemClean cleanly removes the marked lower-right edge, then preserves the original output dimensions. No artificial texture patch is added.</p><div className="privacy-note"><LockKeyhole size={18}/><div><b>Private by design</b><small>Your media stays in your browser. There are no credits, accounts, or cloud upload quotas.</small></div></div></div>
       <div className="before-after" aria-label="Illustration showing before and after watermark removal"><div className="scene"><div className="sun"></div><div className="hill h1"></div><div className="hill h2"></div><div className="stem"></div></div><div className="before-label">BEFORE</div><div className="after-label">AFTER</div><div className="cut"></div><div className="watermark">✦</div><div className="slider-knob">↔</div></div>
     </section>
 
