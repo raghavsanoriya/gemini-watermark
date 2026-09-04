@@ -18,7 +18,11 @@ export type ProcessorErrorCode =
   | 'decode-failed'
   | 'encode-failed'
   | 'cancelled'
+  | 'unsafe-removal'
   | 'processing-failed';
+
+export type ImageRepairMode = 'reverse-alpha' | 'bounded-texture' | 'unchanged-unsafe';
+export type RepairSafetyOutcome = 'not-needed' | 'passed' | 'rejected';
 
 export interface ProcessorProgress {
   phase: Extract<ProcessingPhase, 'detecting' | 'processing' | 'encoding'>;
@@ -34,6 +38,10 @@ export interface WatermarkDetection {
   skipReason: string | null;
   size: number | null;
   position: { x: number; y: number; width: number; height: number } | null;
+  repairMode?: ImageRepairMode | null;
+  repairSafety?: RepairSafetyOutcome | null;
+  qualityStatus?: string | null;
+  qualityWarning?: string | null;
 }
 
 export interface ProcessorResult {

@@ -13,6 +13,10 @@ interface WorkerSuccess {
     skipReason: string | null;
     size: number | null;
     position: WatermarkDetection['position'];
+    repairMode?: WatermarkDetection['repairMode'];
+    repairSafety?: WatermarkDetection['repairSafety'];
+    qualityStatus?: string | null;
+    qualityWarning?: string | null;
   };
 }
 
@@ -107,6 +111,10 @@ export async function processImage(file: File, options: ProcessorOptions): Promi
       skipReason: output.meta.skipReason,
       size: output.meta.size,
       position: output.meta.position,
+      repairMode: output.meta.repairMode,
+      repairSafety: output.meta.repairSafety,
+      qualityStatus: output.meta.qualityStatus,
+      qualityWarning: output.meta.qualityWarning,
     },
   };
 }

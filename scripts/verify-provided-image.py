@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -21,7 +22,7 @@ with sync_playwright() as playwright:
     page.wait_for_load_state("networkidle")
     page.locator('input[accept^="image/png"]').set_input_files(args.input)
     page.get_by_role("button", name="Remove visible mark").click()
-    page.get_by_text("Visible mark repaired locally").wait_for(timeout=120_000)
+    page.get_by_text(re.compile(r"^Visible mark repaired")).wait_for(timeout=120_000)
     with page.expect_download() as download_info:
         page.get_by_role("button", name="Download image").click()
     output = Path(args.output)

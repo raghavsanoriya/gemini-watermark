@@ -126,18 +126,27 @@ export function MediaWorkspace() {
         onProgress: ({ phase, progress, message }) => setJob({ phase, progress, message }),
       });
       if (!processed.detection.applied) {
+        const unsafeRemoval = processed.detection.repairMode === 'unchanged-unsafe';
         setJob({
           phase: 'failed',
           progress: 0,
-          message: 'No supported Gemini, Veo, or Flow mark was detected. The original was left unchanged.',
-          errorCode: 'no-watermark',
+          message: unsafeRemoval
+            ? processed.detection.qualityWarning ?? 'The original was kept because automatic removal could damage this area.'
+            : 'No supported Gemini, Veo, or Flow mark was detected. The original was left unchanged.',
+          errorCode: unsafeRemoval ? 'unsafe-removal' : 'no-watermark',
         });
         return;
       }
       const url = createObjectUrl(processed.blob);
       setResult({ ...processed, url });
       setComparison('after');
-      setJob({ phase: 'complete', progress: 1, message: 'Your cleaned file is ready.' });
+      setJob({
+        phase: 'complete',
+        progress: 1,
+        message: processed.detection.repairMode === 'bounded-texture'
+          ? 'Your cleaned file is ready. A safe local texture repair was used.'
+          : 'Your cleaned file is ready.',
+      });
     } catch (error) {
       if (isAbortError(error)) {
         setJob({ phase: 'cancelled', progress: 0, message: 'Processing cancelled.', errorCode: 'cancelled' });
@@ -209,7 +218,13 @@ export function MediaWorkspace() {
                 <button className="cancel-btn" onClick={() => abortRef.current?.abort()}><Square size={12} /> Cancel</button>
               </div>
             )}
-            {job.phase === 'complete' && <div className="done"><Check size={16} /> Visible mark repaired locally</div>}
+            {job.phase === 'complete' && (
+              <div className="done"><Check size={16} />
+                {result?.detection.repairMode === 'bounded-texture'
+                  ? 'Visible mark repaired with safe texture fill'
+                  : 'Visible mark repaired locally'}
+              </div>
+            )}
             <button className="remove-file" aria-label="Remove selected file" onClick={reset}><X size={17} /></button>
           </div>
 
