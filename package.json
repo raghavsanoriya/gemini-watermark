@@ -1,19 +1,35 @@
 {
-  "name": "gemini-watermark-remover",
+  "name": "gemclean",
+  "version": "1.0.0",
   "private": true,
-  "version": "0.1.0",
-  "type": "module",
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:browser": "python scripts/browser_smoke.py"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
-    "vite": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "lucide-react": "latest"
+    "@pilio/gemini-watermark-remover": "1.0.41",
+    "@zip.js/zip.js": "2.10.0",
+    "lucide-react": "0.542.0",
+    "mediabunny": "1.55.6",
+    "next": "16.3.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@types/node": "24.3.0",
+    "@types/react": "19.1.12",
+    "@types/react-dom": "19.1.9",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.4",
+    "typescript": "5.9.2",
+    "vitest": "3.2.4"
+  }
 }
