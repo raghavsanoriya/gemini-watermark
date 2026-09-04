@@ -75,4 +75,6 @@ To use Takeout-to-Drive, export the Flow data with Google Takeout (or download a
 
 ## Deployment
 
-Import the repository into Vercel. The standard Next.js build settings are detected automatically. No environment variables are required for local ZIP/folder imports; configure the three public Google variables above only if Drive Picker is wanted.
+Pushes to `main` build a static Next.js export and deploy it to GitHub Pages at `https://raghavsanoriya.github.io/gemini-watermark/`. The workflow runs lint, type checking, and unit tests before deployment. Add the optional Google values as GitHub Actions repository variables if Drive Picker is wanted on Pages.
+
+The same repository can also be imported into Vercel. Standard Next.js build settings are detected automatically. No environment variables are required for local ZIP/folder imports; configure the three public Google variables above only if Drive Picker is wanted.
