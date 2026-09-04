@@ -9,4 +9,5 @@ coverage/
 !.env.example
 *.tsbuildinfo
 .DS_Store
+public/vendor/models/*.onnx
 

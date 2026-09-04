@@ -24,6 +24,7 @@ const summaries = result.meta.candidateSummaries?.map((candidate) => ({
 })) ?? [];
 console.log(JSON.stringify({
   selected: {
+    source: result.meta.source,
     size: result.meta.size,
     position: result.meta.position,
     config: result.meta.config,

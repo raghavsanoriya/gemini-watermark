@@ -1,5 +1,6 @@
 import type { ImageDataRemovalResult, WatermarkMeta } from '@pilio/gemini-watermark-remover';
 import type { ImageRepairMode, RepairSafetyOutcome } from '@/types/media';
+import { teleaInpaint } from './telea-inpaint';
 
 export interface PixelImageData {
   width: number;
@@ -197,7 +198,9 @@ export function repairVisibleResidual(
   includeFullDarkFootprint = false
 ): PixelImageData {
   const mappedY = normalizedPosition.y - paddingTop;
-  const border = Math.max(6, Math.ceil(normalizedPosition.width * 0.12));
+  // Telea needs enough clean context to continue long edges (tile grout, rails,
+  // horizons) through the watermark instead of flattening them at the border.
+  const border = Math.max(16, Math.ceil(normalizedPosition.width * 0.5));
   const left = Math.max(0, normalizedPosition.x - border);
   const top = Math.max(0, mappedY - border);
   const right = Math.min(source.width, normalizedPosition.x + normalizedPosition.width + border);
@@ -219,7 +222,9 @@ export function repairVisibleResidual(
           Math.abs(normalizedSource.data[normalizedIndex + channel] - normalizedResult.data[normalizedIndex + channel])
         );
       }
-      if (maximumDifference >= 2) {
+      // One-level changes matter here: the faint Gemini halo is exactly the
+      // part a threshold of two allowed to survive on mid-tone backgrounds.
+      if (maximumDifference >= 1) {
         const patchX = normalizedPosition.x + x - left;
         const patchY = mappedY + y - top;
         mask[patchY * patchWidth + patchX] = 1;
@@ -231,78 +236,44 @@ export function repairVisibleResidual(
   const minimumChangedPixels = Math.max(24, Math.floor(normalizedPosition.width * normalizedPosition.height * 0.03));
   if (changedPixels < minimumChangedPixels) return cropNormalizedResult(normalizedResult, paddingTop, source.height);
 
-  const dilationRadius = Math.max(3, Math.min(7, Math.ceil(normalizedPosition.width * 0.08)));
   const footprintMask = includeFullDarkFootprint
     ? growConnectedBrightPixels(mask, source, left, top, patchWidth, patchHeight, {
         ...normalizedPosition,
         y: mappedY,
       })
-    : mask;
+    : new Uint8Array(mask);
+
+  const dilationRadius = includeFullDarkFootprint
+    ? Math.max(3, Math.min(7, Math.ceil(normalizedPosition.width * 0.08)))
+    : Math.max(4, Math.min(7, Math.ceil(normalizedPosition.width * 0.11)));
   const repairMask = dilateMask(footprintMask, patchWidth, patchHeight, dilationRadius);
-  const patch = new Float32Array(patchWidth * patchHeight * 3);
-  const seedColor = [0, 0, 0];
-  let seedCount = 0;
+  const patch: PixelImageData = {
+    width: patchWidth,
+    height: patchHeight,
+    data: new Uint8ClampedArray(patchWidth * patchHeight * 4),
+  };
 
   for (let y = 0; y < patchHeight; y += 1) {
     for (let x = 0; x < patchWidth; x += 1) {
       const sourceIndex = ((top + y) * source.width + left + x) * 4;
-      const patchIndex = (y * patchWidth + x) * 3;
-      patch[patchIndex] = source.data[sourceIndex];
-      patch[patchIndex + 1] = source.data[sourceIndex + 1];
-      patch[patchIndex + 2] = source.data[sourceIndex + 2];
-      if (repairMask[y * patchWidth + x] === 0) {
-        seedColor[0] += source.data[sourceIndex];
-        seedColor[1] += source.data[sourceIndex + 1];
-        seedColor[2] += source.data[sourceIndex + 2];
-        seedCount += 1;
-      }
+      const patchIndex = (y * patchWidth + x) * 4;
+      patch.data[patchIndex] = source.data[sourceIndex];
+      patch.data[patchIndex + 1] = source.data[sourceIndex + 1];
+      patch.data[patchIndex + 2] = source.data[sourceIndex + 2];
+      patch.data[patchIndex + 3] = source.data[sourceIndex + 3];
     }
   }
-
-  if (seedCount > 0) {
-    seedColor[0] /= seedCount;
-    seedColor[1] /= seedCount;
-    seedColor[2] /= seedCount;
-    for (let y = 0; y < patchHeight; y += 1) {
-      for (let x = 0; x < patchWidth; x += 1) {
-        if (repairMask[y * patchWidth + x] === 0) continue;
-        const patchIndex = (y * patchWidth + x) * 3;
-        patch[patchIndex] = seedColor[0];
-        patch[patchIndex + 1] = seedColor[1];
-        patch[patchIndex + 2] = seedColor[2];
-      }
-    }
-  }
-
-  const iterations = Math.max(240, normalizedPosition.width * 8);
-  for (let iteration = 0; iteration < iterations; iteration += 1) {
-    const next = new Float32Array(patch);
-    for (let y = 1; y < patchHeight - 1; y += 1) {
-      for (let x = 1; x < patchWidth - 1; x += 1) {
-        if (repairMask[y * patchWidth + x] === 0) continue;
-        const pixel = (y * patchWidth + x) * 3;
-        for (let channel = 0; channel < 3; channel += 1) {
-          next[pixel + channel] = (
-            patch[((y - 1) * patchWidth + x) * 3 + channel] +
-            patch[((y + 1) * patchWidth + x) * 3 + channel] +
-            patch[(y * patchWidth + x - 1) * 3 + channel] +
-            patch[(y * patchWidth + x + 1) * 3 + channel]
-          ) * 0.25;
-        }
-      }
-    }
-    patch.set(next);
-  }
+  const inpainted = teleaInpaint(patch, repairMask);
 
   const repaired = clonePixels(source);
   for (let y = 0; y < patchHeight; y += 1) {
     for (let x = 0; x < patchWidth; x += 1) {
       if (repairMask[y * patchWidth + x] === 0) continue;
       const targetIndex = ((top + y) * source.width + left + x) * 4;
-      const patchIndex = (y * patchWidth + x) * 3;
-      repaired.data[targetIndex] = Math.round(patch[patchIndex]);
-      repaired.data[targetIndex + 1] = Math.round(patch[patchIndex + 1]);
-      repaired.data[targetIndex + 2] = Math.round(patch[patchIndex + 2]);
+      const patchIndex = (y * patchWidth + x) * 4;
+      repaired.data[targetIndex] = inpainted.data[patchIndex];
+      repaired.data[targetIndex + 1] = inpainted.data[patchIndex + 1];
+      repaired.data[targetIndex + 2] = inpainted.data[patchIndex + 2];
     }
   }
 
@@ -323,6 +294,12 @@ export function shouldRepairDetectedResidual(meta: ExtendedMeta): boolean {
 
   const hasDestructiveDamage = hasDestructiveRemovalDamage(meta);
   if (hasDestructiveDamage) return true;
+
+  if (
+    meta.qualityStatus === 'visible-residual' &&
+    imperfections?.detected === true &&
+    (imperfections.score ?? 0) >= 0.8
+  ) return true;
 
   return meta.source.includes('adaptive') &&
     imperfections?.detected === true &&
@@ -504,8 +481,8 @@ export function repairDetectedResidual(
     imageData: repaired,
     meta: {
       ...meta,
-      source: `${meta.source}+bounded-texture-repair`,
-      repairMode: 'bounded-texture',
+      source: `${meta.source}+telea-content-aware-repair`,
+      repairMode: 'content-aware-telea',
       repairSafety: 'passed',
       qualityWarning: null,
     } as WatermarkMeta,
@@ -550,8 +527,8 @@ export function tryPanoramaImageFallback(
         ...meta.config,
         marginBottom: source.height - mappedPosition.y - mappedPosition.height,
       } : null,
-      source: `${meta.source}+panorama-normalized${meta.qualityStatus === 'visible-residual' ? '+bounded-texture-repair' : ''}`,
-      repairMode: meta.qualityStatus === 'visible-residual' ? 'bounded-texture' : 'reverse-alpha',
+      source: `${meta.source}+panorama-normalized${meta.qualityStatus === 'visible-residual' ? '+telea-content-aware-repair' : ''}`,
+      repairMode: meta.qualityStatus === 'visible-residual' ? 'content-aware-telea' : 'reverse-alpha',
       repairSafety: meta.qualityStatus === 'visible-residual' ? 'passed' : 'not-needed',
       qualityWarning: null,
     } as WatermarkMeta,

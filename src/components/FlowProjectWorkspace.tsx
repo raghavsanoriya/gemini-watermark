@@ -201,13 +201,14 @@ export function FlowProjectWorkspace() {
         setOverallProgress((index + progress) / total);
       },
       onComplete: (asset, result, index, total) => {
-        const usedTextureRepair = result.detection.repairMode === 'bounded-texture';
+        const usedTextureRepair = result.detection.repairMode === 'bounded-texture' ||
+          result.detection.repairMode?.startsWith('content-aware');
         const unsafeRemoval = result.detection.repairMode === 'unchanged-unsafe';
         updateBatch(asset.id, {
           state: result.detection.applied ? 'complete' : 'clean',
           progress: 1,
           message: result.detection.applied
-            ? usedTextureRepair ? 'Visible mark repaired with safe texture fill' : 'Visible mark repaired'
+            ? usedTextureRepair ? 'Visible mark repaired with content-aware fill' : 'Visible mark repaired'
             : unsafeRemoval
               ? result.detection.qualityWarning ?? 'Unsafe removal avoided; original kept'
               : 'No supported mark found; original kept',

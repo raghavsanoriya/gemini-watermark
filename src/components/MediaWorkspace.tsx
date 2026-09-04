@@ -143,8 +143,8 @@ export function MediaWorkspace() {
       setJob({
         phase: 'complete',
         progress: 1,
-        message: processed.detection.repairMode === 'bounded-texture'
-          ? 'Your cleaned file is ready. A safe local texture repair was used.'
+        message: processed.detection.repairMode?.startsWith('content-aware') || processed.detection.repairMode === 'bounded-texture'
+          ? 'Your cleaned file is ready. A safe local content-aware repair was used.'
           : 'Your cleaned file is ready.',
       });
     } catch (error) {
@@ -220,8 +220,8 @@ export function MediaWorkspace() {
             )}
             {job.phase === 'complete' && (
               <div className="done"><Check size={16} />
-                {result?.detection.repairMode === 'bounded-texture'
-                  ? 'Visible mark repaired with safe texture fill'
+                {result?.detection.repairMode?.startsWith('content-aware') || result?.detection.repairMode === 'bounded-texture'
+                  ? 'Visible mark repaired with content-aware fill'
                   : 'Visible mark repaired locally'}
               </div>
             )}

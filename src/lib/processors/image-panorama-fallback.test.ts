@@ -99,6 +99,20 @@ describe('detected residual cleanup', () => {
     expect(shouldRepairDetectedResidual({ ...suspiciousMeta, selectionConfidence: 0.5, position: { x: 0, y: 0, width: 62, height: 62 } })).toBe(false);
   });
 
+  it('repairs an engine-confirmed visible residual from the standard catalog path', () => {
+    expect(shouldRepairDetectedResidual({
+      ...suspiciousMeta,
+      source: 'standard+catalog+fixed-local+gain',
+      qualityStatus: 'visible-residual',
+      selectionConfidence: 0.025,
+      position: { x: 0, y: 0, width: 45, height: 45 },
+      qualitySignals: {
+        imperfections: { detected: true, severity: 'high', score: 2.65 },
+        damageComponents: { nearBlack: 0, nearWhite: 0, texture: 0, clipped: 0 },
+      },
+    })).toBe(true);
+  });
+
   it('repairs destructive catalog output even when the detector did not use the adaptive source', () => {
     const destructiveMeta = {
       ...suspiciousMeta,
@@ -133,8 +147,8 @@ describe('detected residual cleanup', () => {
     });
     expect(result.imageData.data[(44 * 96 + 44) * 4]).toBe(100);
     expect(result.imageData.data[(2 * 96 + 2) * 4]).toBe(100);
-    expect(result.meta.source).toContain('bounded-texture-repair');
-    expect((result.meta as typeof suspiciousMeta & { repairMode?: string }).repairMode).toBe('bounded-texture');
+    expect(result.meta.source).toContain('telea-content-aware-repair');
+    expect((result.meta as typeof suspiciousMeta & { repairMode?: string }).repairMode).toBe('content-aware-telea');
   });
 
   it('removes a black reverse-alpha imprint without changing pixels outside the bounded patch', () => {
@@ -166,7 +180,7 @@ describe('detected residual cleanup', () => {
     const outside = (10 * 120 + 10) * 4;
     expect(result.imageData.data[center]).toBe(38);
     expect(result.imageData.data[outside]).toBe(source.data[outside]);
-    expect((result.meta as typeof destructiveMeta & { repairMode?: string }).repairMode).toBe('bounded-texture');
+    expect((result.meta as typeof destructiveMeta & { repairMode?: string }).repairMode).toBe('content-aware-telea');
     expect(isBoundedTextureRepairSafe(source, damaged, result.imageData, destructiveMeta.position)).toBe(true);
   });
 
@@ -226,6 +240,6 @@ describe('detected residual cleanup', () => {
     const watermarkOutsideSelection = (72 * 144 + 90) * 4;
     expect(result.imageData.data[formerBlackCenter]).toBe(38);
     expect(result.imageData.data[watermarkOutsideSelection]).toBe(38);
-    expect((result.meta as typeof destructiveMeta & { repairMode?: string }).repairMode).toBe('bounded-texture');
+    expect((result.meta as typeof destructiveMeta & { repairMode?: string }).repairMode).toBe('content-aware-telea');
   });
 });

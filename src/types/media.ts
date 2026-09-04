@@ -21,7 +21,12 @@ export type ProcessorErrorCode =
   | 'unsafe-removal'
   | 'processing-failed';
 
-export type ImageRepairMode = 'reverse-alpha' | 'bounded-texture' | 'unchanged-unsafe';
+export type ImageRepairMode =
+  | 'reverse-alpha'
+  | 'bounded-texture'
+  | 'content-aware-telea'
+  | 'content-aware-migan'
+  | 'unchanged-unsafe';
 export type RepairSafetyOutcome = 'not-needed' | 'passed' | 'rejected';
 
 export interface ProcessorProgress {
