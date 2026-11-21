@@ -24,7 +24,7 @@
     "heic2any": "0.0.4",
     "lucide-react": "0.542.0",
     "mediabunny": "1.55.6",
-    "next": "16.3.4",
+    "next": "16.4.6",
     "onnxruntime-web": "1.23.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -35,7 +35,7 @@
     "@types/react": "19.1.12",
     "@types/react-dom": "19.1.9",
     "eslint": "9.39.5",
-    "eslint-config-next": "16.3.4",
+    "eslint-config-next": "16.4.6",
     "lighthouse": "13.6.0",
     "typescript": "5.9.2",
     "vitest": "3.2.4"

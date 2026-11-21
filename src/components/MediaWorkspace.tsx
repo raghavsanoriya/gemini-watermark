@@ -53,6 +53,11 @@ export function MediaWorkspace() {
   const [target, setTarget] = useState<'device' | 'server'>('device');
   const serverAvailable = SERVER_MODE && kind === 'image' && !!file && file.size <= SERVER_MAX_UPLOAD_BYTES;
   const useServer = serverAvailable && target === 'server';
+  // processImageOnServer tags its results, so the wording follows where the file really went.
+  const cleanedOnServer = result?.detection.decisionTier === 'server';
+  const where = cleanedOnServer || (useServer && !result)
+    ? (cleanedOnServer ? 'uploaded for cleaning, not stored' : 'will be uploaded when you clean it, not stored')
+    : 'stays on your device';
 
   useEffect(() => () => {
     abortRef.current?.abort();
@@ -221,7 +226,7 @@ export function MediaWorkspace() {
             )}
             {isRunning && (
               <div className="processing" role="status" aria-live="polite">
-                <span /><b>{job.phase === 'encoding' ? 'Encoding locally…' : 'Cleaning locally…'}</b><small>{job.message}</small>
+                <span /><b>{useServer ? 'Cleaning on the server…' : job.phase === 'encoding' ? 'Encoding locally…' : 'Cleaning locally…'}</b><small>{job.message}</small>
                 <div className="progress-track"><i style={{ transform: `scaleX(${job.progress})` }} /></div>
                 <em>{Math.round(job.progress * 100)}%</em>
                 <button className="cancel-btn" onClick={() => abortRef.current?.abort()}><Square size={12} /> Cancel</button>
@@ -229,16 +234,14 @@ export function MediaWorkspace() {
             )}
             {job.phase === 'complete' && (
               <div className="done"><Check size={16} />
-                {result?.detection.repairMode?.startsWith('content-aware') || result?.detection.repairMode === 'bounded-texture'
-                  ? 'Visible mark repaired with content-aware fill'
-                  : 'Visible mark repaired locally'}
+                {`Visible mark repaired ${cleanedOnServer ? 'on the server' : 'locally'}${result?.detection.repairMode?.startsWith('content-aware') || result?.detection.repairMode === 'bounded-texture' ? ', with content-aware fill' : ''}`}
               </div>
             )}
             <button className="remove-file" aria-label="Remove selected file" onClick={reset}><X size={17} /></button>
           </div>
 
           <div className="file-actions">
-            <div className="file-meta"><b>{file.name}</b><small>{formatBytes(file.size)}{duration ? `, ${duration.toFixed(1)} sec` : ''}, stays on your device</small></div>
+            <div className="file-meta"><b>{file.name}</b><small>{formatBytes(file.size)}{duration ? `, ${duration.toFixed(1)} sec` : ''}, {where}</small></div>
             {result?.detection.size && <div className="detection-chip"><Sparkles size={13} /> {result.detection.size}px calibrated mark</div>}
             {job.phase === 'ready' && SERVER_MODE && kind === 'image' && (
               <div className="target-toggle" role="radiogroup" aria-label="Where to process">
