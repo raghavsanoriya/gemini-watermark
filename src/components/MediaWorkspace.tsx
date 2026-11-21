@@ -200,7 +200,7 @@ export function MediaWorkspace() {
 
       {!file ? (
         <>
-          <div className="image-orbs"><div className="file-card left"><span>✦</span><small>GEMINI</small></div><div className="connector"><span>→</span></div><div className="file-card right"><ImagePlus size={23} /><small>CLEAN</small></div></div>
+          <div className="image-orbs"><div className="file-card left"><span>✦</span><small>Gemini</small></div><div className="connector"><span>→</span></div><div className="file-card right"><ImagePlus size={23} /><small>Clean</small></div></div>
           <h2>Drop a file here</h2><p>image or video, processed only on this device</p>
           <button className="upload-btn" onClick={() => inputRef.current?.click()}><Upload size={18} /> Choose file</button>
           <small className="formats">PNG, JPG, WEBP, HEIC, MP4, MOV, WEBM, MKV, MPG or MPEG</small>

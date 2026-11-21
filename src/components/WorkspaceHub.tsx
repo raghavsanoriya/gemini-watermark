@@ -1,8 +1,10 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import { FileArchive, Image as ImageIcon, Images } from 'lucide-react';
-import { FlowProjectWorkspace } from '@/components/FlowProjectWorkspace';
+// The batch and Flow views load only when their tab opens, keeping the first screen light.
+const FlowProjectWorkspace = dynamic(() => import('@/components/FlowProjectWorkspace').then((m) => m.FlowProjectWorkspace));
 import { MediaWorkspace } from '@/components/MediaWorkspace';
 
 type Mode = 'single' | 'batch' | 'flow';

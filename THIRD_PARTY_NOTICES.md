@@ -28,5 +28,13 @@ Server mode decodes and encodes images with [sharp](https://github.com/lovell/sh
 (Apache-2.0), which uses prebuilt [libvips](https://github.com/libvips/libvips)
 binaries (LGPL-3.0).
 
+## Fonts
+
+Cabinet Grotesk, Ranade and Gambarino are from [Fontshare](https://www.fontshare.com/) by the Indian Type Foundry, used under the ITF Free Font License and self-hosted in `src/app/fonts/`. Geist Mono is from Vercel under the SIL Open Font License 1.1, self-hosted through `next/font`.
+
+## Demo photograph
+
+`public/demo/timber-before.jpg` and `timber-after.jpg` are made from [Brettsperrholzkonstruktion.jpg](https://commons.wikimedia.org/wiki/File:Brettsperrholzkonstruktion.jpg) by RoterRolf (CC0, Wikimedia Commons), with a Gemini mark added for the demonstration.
+
 The Telea and MI-GAN licenses permit use, copying, modification, and distribution subject to
 their respective copyright and permission notices.

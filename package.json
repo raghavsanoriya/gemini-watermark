@@ -15,7 +15,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:browser": "python scripts/browser_smoke.py"
+    "test:browser": "python scripts/browser_smoke.py",
+    "audit:lighthouse": "lighthouse http://localhost:4173/ --quiet --chrome-flags=\"--headless=new\" --output=html --output=json --output-path=./reports/lighthouse/home"
   },
   "dependencies": {
     "@pilio/gemini-watermark-remover": "1.0.41",
@@ -35,6 +36,7 @@
     "@types/react-dom": "19.1.9",
     "eslint": "9.39.5",
     "eslint-config-next": "16.3.4",
+    "lighthouse": "13.6.0",
     "typescript": "5.9.2",
     "vitest": "3.2.4"
   }
