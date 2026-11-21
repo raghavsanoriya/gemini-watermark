@@ -16,7 +16,10 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ['sharp', 'onnxruntime-web'],
   // The server reads the MI-GAN model from disk, so ship it with the clean function.
   outputFileTracingIncludes: {
-    '/api/clean': ['./public/vendor/models/migan-pipeline-v2.onnx'],
+    '/api/clean': [
+      './public/vendor/models/migan-pipeline-v2.onnx',
+      './node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
+    ],
   },
   env: {
     NEXT_PUBLIC_BASE_PATH: isGitHubPages ? '/gemini-watermark' : '',
