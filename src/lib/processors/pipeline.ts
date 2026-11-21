@@ -13,6 +13,8 @@ import { removeMarkByTemplateSearch } from './template-search';
 export interface CleanImageOptions {
   /** Loads the MI-GAN model; omitted in the browser, where the bundled loader is used. */
   miganSessionFactory?: MiganSessionFactory;
+  /** Called when the optional MI-GAN repair fails (the pipeline then falls back). */
+  onMiganError?: (error: unknown) => void;
 }
 
 /**
@@ -58,8 +60,9 @@ export async function cleanImageData(
   let migan: ImageDataRemovalResult | null = null;
   try {
     migan = await repairWithMigan(original, reverseAlpha, result, options.miganSessionFactory);
-  } catch {
+  } catch (error) {
     // The optional model may be unavailable (offline, or not shipped to this host).
+    options.onMiganError?.(error);
   }
   if (migan) return migan;
   if (

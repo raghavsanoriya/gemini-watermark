@@ -12,6 +12,8 @@ export interface CleanOutcome {
   message: string | null;
   /** Cleaned PNG; null when no mark was removed. */
   png: Buffer | null;
+  /** Why MI-GAN could not run, when it failed. */
+  miganError: string | null;
 }
 
 /** Cleans one uploaded image entirely in memory. Nothing is written to disk. */
@@ -34,9 +36,16 @@ export async function cleanUploadedImage(file: File): Promise<CleanOutcome> {
     throw new HttpError(422, 'This image could not be decoded.');
   }
   const { data, info } = decoded;
+  let miganError: string | null = null;
   const result = await cleanImageData(
     { width: info.width, height: info.height, data: new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength) },
-    { miganSessionFactory: nodeMiganSessionFactory },
+    {
+      miganSessionFactory: nodeMiganSessionFactory,
+      onMiganError: (error) => {
+        miganError = error instanceof Error ? error.message : String(error);
+        console.error('[gemclean] MI-GAN repair failed', error);
+      },
+    },
   );
   const meta = result.meta as typeof result.meta & { repairMode?: string | null; qualityWarning?: string | null };
   if (!meta.applied) {
@@ -45,11 +54,12 @@ export async function cleanUploadedImage(file: File): Promise<CleanOutcome> {
       repairMode: meta.repairMode ?? null,
       message: meta.qualityWarning ?? 'No supported Gemini mark was detected. The original was left unchanged.',
       png: null,
+      miganError,
     };
   }
   const pixels = result.imageData.data;
   const png = await sharp(Buffer.from(pixels.buffer, pixels.byteOffset, pixels.byteLength), {
     raw: { width: info.width, height: info.height, channels: 4 },
   }).png().toBuffer();
-  return { applied: true, repairMode: meta.repairMode ?? 'reverse-alpha', message: null, png };
+  return { applied: true, repairMode: meta.repairMode ?? 'reverse-alpha', message: null, png, miganError };
 }
