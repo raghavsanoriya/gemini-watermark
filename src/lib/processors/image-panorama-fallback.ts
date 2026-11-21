@@ -280,17 +280,17 @@ export function repairVisibleResidual(
   return repaired;
 }
 
-export function shouldRepairDetectedResidual(meta: ExtendedMeta): boolean {
+function isRepairableSelection(meta: ExtendedMeta): boolean {
   const position = meta.position;
+  return !!meta.applied && !!position &&
+    position.width >= MIN_REPAIR_SIZE && position.width <= MAX_REPAIR_SIZE &&
+    position.height >= MIN_REPAIR_SIZE && position.height <= MAX_REPAIR_SIZE;
+}
+
+export function shouldRepairDetectedResidual(meta: ExtendedMeta): boolean {
   const imperfections = meta.qualitySignals?.imperfections;
   const confidence = meta.selectionConfidence;
-  if (!meta.applied || !position) return false;
-  if (
-    position.width < MIN_REPAIR_SIZE ||
-    position.width > MAX_REPAIR_SIZE ||
-    position.height < MIN_REPAIR_SIZE ||
-    position.height > MAX_REPAIR_SIZE
-  ) return false;
+  if (!isRepairableSelection(meta)) return false;
 
   const hasDestructiveDamage = hasDestructiveRemovalDamage(meta);
   if (hasDestructiveDamage) return true;
@@ -359,6 +359,62 @@ function getRegionStats(
     meanLuminance: count > 0 ? luminance / count : 0,
     count,
   };
+}
+
+const luminanceAt = (imageData: PixelImageData, index: number): number =>
+  imageData.data[index] * 0.2126 + imageData.data[index + 1] * 0.7152 + imageData.data[index + 2] * 0.0722;
+
+/**
+ * Estimates how many luminance levels of the white mark remain visible after
+ * reverse-alpha removal. For a perfect removal, original - result equals
+ * alpha * (255 - result), so dividing by (255 - result) recovers the mark's alpha
+ * shape, which is independent of the restored background. Regressing the result on
+ * that shape gives ~0 for a clean result, a positive value for a leftover glow, and
+ * a negative value for an over-removed dark imprint, in luminance levels at full alpha.
+ */
+export function residualMarkLevels(
+  original: PixelImageData,
+  result: PixelImageData,
+  position: NonNullable<WatermarkMeta['position']>
+): number {
+  const left = Math.max(0, position.x);
+  const top = Math.max(0, position.y);
+  const right = Math.min(original.width, position.x + position.width);
+  const bottom = Math.min(original.height, position.y + position.height);
+  let count = 0;
+  let sumShape = 0;
+  let sumResult = 0;
+  let sumShapeSquared = 0;
+  let sumProduct = 0;
+
+  for (let y = top; y < bottom; y += 1) {
+    for (let x = left; x < right; x += 1) {
+      const index = (y * original.width + x) * 4;
+      const value = luminanceAt(result, index);
+      const shape = (luminanceAt(original, index) - value) / Math.max(1, 255 - value);
+      sumShape += shape;
+      sumResult += value;
+      sumShapeSquared += shape * shape;
+      sumProduct += shape * value;
+      count += 1;
+    }
+  }
+
+  if (count === 0) return 0;
+  const shapeVariance = sumShapeSquared / count - (sumShape / count) ** 2;
+  if (shapeVariance <= 1e-6) return 0;
+  return (sumProduct / count - (sumShape / count) * (sumResult / count)) / shapeVariance;
+}
+
+/** Leftover glow or imprint at or above this many luminance levels is visible. */
+const VISIBLE_RESIDUAL_LEVELS = 10;
+
+export function hasVisibleResidual(
+  original: PixelImageData,
+  result: PixelImageData,
+  position: NonNullable<WatermarkMeta['position']>
+): boolean {
+  return Math.abs(residualMarkLevels(original, result, position)) >= VISIBLE_RESIDUAL_LEVELS;
 }
 
 function getSurroundingLuminanceStats(
@@ -438,7 +494,14 @@ export function repairDetectedResidual(
   result: ImageDataRemovalResult,
 ): ImageDataRemovalResult {
   const meta = result.meta as ExtendedMeta;
-  if (!shouldRepairDetectedResidual(meta) || !meta.position) {
+  // The engine's residual flag is a heuristic: it fires on clean dark corners and
+  // misses leftovers on resized images. Repaint when the removal clipped pixels or
+  // the mark is still measurably visible; otherwise keep the exact reverse-alpha result.
+  const needsRepair = isRepairableSelection(meta) && !!meta.position && (
+    (shouldRepairDetectedResidual(meta) && hasDestructiveRemovalDamage(meta)) ||
+    hasVisibleResidual(source, result.imageData, meta.position)
+  );
+  if (!needsRepair || !meta.position) {
     return {
       imageData: result.imageData,
       meta: {
@@ -463,6 +526,19 @@ export function repairDetectedResidual(
     hasDestructiveDamage
   );
   if (!isBoundedTextureRepairSafe(source, result.imageData, repaired, repairPosition)) {
+    // A faint leftover is better than discarding an otherwise good removal; only
+    // clipped/destructive output falls back to the untouched original.
+    if (!hasDestructiveDamage) {
+      return {
+        imageData: result.imageData,
+        meta: {
+          ...meta,
+          repairMode: 'reverse-alpha',
+          repairSafety: 'rejected',
+          qualityWarning: null,
+        } as WatermarkMeta,
+      };
+    }
     return {
       imageData: clonePixels(source),
       meta: {
@@ -508,7 +584,9 @@ export function tryPanoramaImageFallback(
     ...meta.position,
     y: meta.position.y - normalized.paddingTop,
   };
-  const repaired = meta.qualityStatus === 'visible-residual'
+  const useContentAwareRepair = meta.qualityStatus === 'visible-residual' &&
+    hasVisibleResidual(normalized.imageData, result.imageData, meta.position);
+  const repaired = useContentAwareRepair
     ? repairVisibleResidual(
         source,
         normalized.imageData,
@@ -527,9 +605,9 @@ export function tryPanoramaImageFallback(
         ...meta.config,
         marginBottom: source.height - mappedPosition.y - mappedPosition.height,
       } : null,
-      source: `${meta.source}+panorama-normalized${meta.qualityStatus === 'visible-residual' ? '+telea-content-aware-repair' : ''}`,
-      repairMode: meta.qualityStatus === 'visible-residual' ? 'content-aware-telea' : 'reverse-alpha',
-      repairSafety: meta.qualityStatus === 'visible-residual' ? 'passed' : 'not-needed',
+      source: `${meta.source}+panorama-normalized${useContentAwareRepair ? '+telea-content-aware-repair' : ''}`,
+      repairMode: useContentAwareRepair ? 'content-aware-telea' : 'reverse-alpha',
+      repairSafety: useContentAwareRepair ? 'passed' : 'not-needed',
       qualityWarning: null,
     } as WatermarkMeta,
   };

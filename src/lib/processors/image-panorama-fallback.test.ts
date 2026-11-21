@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   needsPanoramaFallback,
   padPanoramaForDetection,
+  hasVisibleResidual,
   isBoundedTextureRepairSafe,
   repairDetectedResidual,
+  residualMarkLevels,
   shouldRepairDetectedResidual,
   tryPanoramaImageFallback,
   type PixelImageData,
@@ -241,5 +243,91 @@ describe('detected residual cleanup', () => {
     expect(result.imageData.data[formerBlackCenter]).toBe(38);
     expect(result.imageData.data[watermarkOutsideSelection]).toBe(38);
     expect((result.meta as typeof destructiveMeta & { repairMode?: string }).repairMode).toBe('content-aware-telea');
+  });
+});
+
+describe('residual visibility gate', () => {
+  const position = { x: 24, y: 24, width: 48, height: 48 };
+
+  // Dark, slightly noisy background with a white sparkle blended in, like a Gemini
+  // mark on a night scene. `leftover` keeps that fraction of the mark in the result.
+  function darkScene(leftover: number) {
+    const clean = createPixels(96, 96, 0);
+    const marked = createPixels(96, 96, 0);
+    const result = createPixels(96, 96, 0);
+    for (let y = 0; y < 96; y += 1) {
+      for (let x = 0; x < 96; x += 1) {
+        const index = (y * 96 + x) * 4;
+        const background = 14 + ((x * 7 + y * 13) % 9);
+        const distance = Math.abs(x - 48) + Math.abs(y - 48);
+        const alpha = distance < 20 ? 0.5 * (1 - distance / 20) : 0;
+        const markedValue = Math.round(alpha * 255 + (1 - alpha) * background);
+        for (let channel = 0; channel < 3; channel += 1) {
+          clean.data[index + channel] = background;
+          marked.data[index + channel] = markedValue;
+          result.data[index + channel] = Math.round(background + leftover * (markedValue - background));
+        }
+      }
+    }
+    return { clean, marked, result };
+  }
+
+  const residualMeta = {
+    applied: true,
+    skipReason: null,
+    size: 48,
+    position,
+    config: { logoSize: 48, marginRight: 24, marginBottom: 24 },
+    detection: {},
+    source: 'standard+catalog',
+    decisionTier: 'direct-match',
+    alphaGain: 1,
+    passCount: 1,
+    attemptedPassCount: 1,
+    passStopReason: null,
+    qualityStatus: 'visible-residual',
+    selectionConfidence: 0.1,
+    qualitySignals: {
+      imperfections: { detected: true, severity: 'high', score: 1.8 },
+      damageComponents: { nearBlack: 0, nearWhite: 0, texture: 0, clipped: 0 },
+    },
+  };
+
+  it('scores a clean removal near zero and a leftover glow or imprint as visible', () => {
+    const clean = darkScene(0);
+    const glow = darkScene(0.1);
+    const imprint = darkScene(-0.1);
+    expect(Math.abs(residualMarkLevels(clean.marked, clean.result, position))).toBeLessThan(3);
+    expect(hasVisibleResidual(clean.marked, clean.result, position)).toBe(false);
+    expect(hasVisibleResidual(glow.marked, glow.result, position)).toBe(true);
+    expect(hasVisibleResidual(imprint.marked, imprint.result, position)).toBe(true);
+  });
+
+  it('keeps an exact reverse-alpha result on a dark background instead of repainting it', () => {
+    const { marked, result } = darkScene(0);
+    const repaired = repairDetectedResidual(marked, { imageData: result, meta: residualMeta as never });
+    expect(Array.from(repaired.imageData.data)).toEqual(Array.from(result.data));
+    expect((repaired.meta as { repairMode?: string }).repairMode).toBe('reverse-alpha');
+  });
+
+  it('still repaints a dark background when the mark is visibly left behind', () => {
+    const { marked, result } = darkScene(0.15);
+    const repaired = repairDetectedResidual(marked, { imageData: result, meta: residualMeta as never });
+    expect((repaired.meta as { repairMode?: string }).repairMode).toBe('content-aware-telea');
+  });
+
+  it('repaints a visible leftover even when the engine reports a clean result', () => {
+    const cleanMeta = {
+      ...residualMeta,
+      qualityStatus: 'clean',
+      qualitySignals: { imperfections: { detected: false, severity: 'none', score: 0 } },
+    };
+    const leftover = darkScene(0.15);
+    const repaired = repairDetectedResidual(leftover.marked, { imageData: leftover.result, meta: cleanMeta as never });
+    expect((repaired.meta as { repairMode?: string }).repairMode).toBe('content-aware-telea');
+
+    const clean = darkScene(0);
+    const untouched = repairDetectedResidual(clean.marked, { imageData: clean.result, meta: cleanMeta as never });
+    expect((untouched.meta as { repairMode?: string }).repairMode).toBe('reverse-alpha');
   });
 });
