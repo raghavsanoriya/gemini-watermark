@@ -201,7 +201,7 @@ export function MediaWorkspace() {
       {!file ? (
         <>
           <div className="image-orbs"><div className="file-card left"><span>✦</span><small>GEMINI</small></div><div className="connector"><span>→</span></div><div className="file-card right"><ImagePlus size={23} /><small>CLEAN</small></div></div>
-          <h2>Drop a file here</h2><p>image or video — processed only on this device</p>
+          <h2>Drop a file here</h2><p>image or video, processed only on this device</p>
           <button className="upload-btn" onClick={() => inputRef.current?.click()}><Upload size={18} /> Choose file</button>
           <small className="formats">PNG, JPG, WEBP, HEIC, MP4, MOV, WEBM, MKV, MPG or MPEG</small>
           {job.phase === 'failed' && <div className="inline-error" role="alert"><AlertTriangle size={16} />{job.message}</div>}
@@ -222,7 +222,7 @@ export function MediaWorkspace() {
             {isRunning && (
               <div className="processing" role="status" aria-live="polite">
                 <span /><b>{job.phase === 'encoding' ? 'Encoding locally…' : 'Cleaning locally…'}</b><small>{job.message}</small>
-                <div className="progress-track"><i style={{ width: `${Math.round(job.progress * 100)}%` }} /></div>
+                <div className="progress-track"><i style={{ transform: `scaleX(${job.progress})` }} /></div>
                 <em>{Math.round(job.progress * 100)}%</em>
                 <button className="cancel-btn" onClick={() => abortRef.current?.abort()}><Square size={12} /> Cancel</button>
               </div>
@@ -238,7 +238,7 @@ export function MediaWorkspace() {
           </div>
 
           <div className="file-actions">
-            <div className="file-meta"><b>{file.name}</b><small>{formatBytes(file.size)}{duration ? ` · ${duration.toFixed(1)} sec` : ''} · stays on your device</small></div>
+            <div className="file-meta"><b>{file.name}</b><small>{formatBytes(file.size)}{duration ? `, ${duration.toFixed(1)} sec` : ''}, stays on your device</small></div>
             {result?.detection.size && <div className="detection-chip"><Sparkles size={13} /> {result.detection.size}px calibrated mark</div>}
             {job.phase === 'ready' && SERVER_MODE && kind === 'image' && (
               <div className="target-toggle" role="radiogroup" aria-label="Where to process">

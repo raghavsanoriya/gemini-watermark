@@ -21,8 +21,7 @@ export default function Home() {
       </nav>
 
       <section className="hero wrap" id="top">
-        <div className="eyebrow"><span /> Local-first · no account needed</div>
-        <h1>Remove Gemini marks<br />from <em>images &amp; video.</em></h1>
+        <h1>Remove Gemini marks<br />from images &amp; video.</h1>
         <p className="intro">A private browser workspace for repairing visible Gemini, Veo, and Google Flow corner marks with calibrated pixel restoration.</p>
         <WorkspaceHub />
         <div className="reassurance">
@@ -35,24 +34,23 @@ export default function Home() {
 
       <section className="proof wrap" id="privacy">
         <div className="proof-copy">
-          <div className="eyebrow"><span /> Calibrated, not guessed</div>
-          <h2>A clean corner.<br />A <em>finished</em> frame.</h2>
+          <h2>A clean corner.<br />A finished frame.</h2>
           <p>GemClean detects known visible Google AI marks and reverses their alpha blend. It does not crop the frame, blur a rectangle, or send your file to an AI service.</p>
           <div className="privacy-note"><LockKeyhole size={18} /><div><b>Private by design</b><small>{SERVER_MODE ? 'In the free mode your media stays in browser memory and disappears when you close or reset the page. Optional server processing uploads only the image you send; it is cleaned in memory and not stored.' : 'Your media stays in browser memory and disappears when you close or reset the page.'}</small></div></div>
         </div>
         <div className="before-after" aria-label="Illustration showing before and after visible watermark removal">
           <div className="scene"><div className="sun" /><div className="hill h1" /><div className="hill h2" /><div className="stem" /></div>
-          <div className="before-label">BEFORE</div><div className="after-label">AFTER</div><div className="cut" /><div className="watermark">✦</div><div className="slider-knob">↔</div>
+          <div className="before-label">Before</div><div className="after-label">After</div><div className="cut" /><div className="watermark">✦</div><div className="slider-knob">↔</div>
         </div>
       </section>
 
       <section className="how wrap" id="how">
-        <div className="section-heading"><div><div className="eyebrow"><span /> Simple by default</div><h2>Three steps. <em>Zero</em> uploads{SERVER_MODE ? ' by default' : ''}.</h2></div><p>The processing engine is downloaded with the app and runs on your own device.</p></div>
+        <div className="section-heading"><div><h2>Three steps. Zero uploads{SERVER_MODE ? ' by default' : ''}.</h2></div><p>The processing engine is downloaded with the app and runs on your own device.</p></div>
         <div className="steps">{steps.map(([number, title, copy]) => <article className="step" key={number}><span>{number}</span><h3>{title}</h3><p>{copy}</p></article>)}</div>
       </section>
 
       <section className="faq wrap" id="faq">
-        <div><div className="eyebrow"><span /> Good to know</div><h2>Questions, answered.</h2></div>
+        <div><h2>Questions, answered.</h2></div>
         <div className="questions">
           <details open><summary>Does my file leave this device?<b>+</b></summary><p>{SERVER_MODE ? 'Not in the default free mode: decoding, detection, restoration, and export all happen locally in your browser. Only if you choose "Upload to server" is that one image sent to the GemClean server, where it is cleaned in memory and returned. Nothing is stored and no account is needed.' : 'No. Decoding, detection, restoration, and export all happen locally in your browser. There is no upload API.'}</p></details>
           <details><summary>Which formats can I use?<b>+</b></summary><p>Images: PNG, JPG, and WebP. Videos: MP4, MOV, WebM, MKV, MPG, and MPEG when your browser can decode them. Video exports as MP4/H.264.</p></details>

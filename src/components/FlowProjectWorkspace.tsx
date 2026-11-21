@@ -337,7 +337,7 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
   return (
     <div className="workspace flow-gallery-workspace">
       <div className="flow-gallery-header">
-        <div><span className="flow-source"><FileArchive size={15} /> {manifest.source.label}</span><h2>{variant === 'images' ? 'Review selected images' : 'Review imported media'}</h2><p>{variant === 'images' ? `${manifest.assets.length} image${manifest.assets.length === 1 ? '' : 's'}` : `${manifest.projects.length} project${manifest.projects.length === 1 ? '' : 's'} · ${manifest.assets.length} media items`} · processed locally</p></div>
+        <div><span className="flow-source"><FileArchive size={15} /> {manifest.source.label}</span><h2>{variant === 'images' ? 'Review selected images' : 'Review imported media'}</h2><p>{variant === 'images' ? `${manifest.assets.length} image${manifest.assets.length === 1 ? '' : 's'}` : `${manifest.projects.length} project${manifest.projects.length === 1 ? '' : 's'}, ${manifest.assets.length} media items`}, processed locally</p></div>
         <button className="flow-close" onClick={() => void reset()} aria-label="Close imported project"><X size={18} /></button>
       </div>
 
@@ -357,8 +357,8 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
               {asset.kind === 'image' ? <AssetImage asset={asset} blob={item?.result?.blob} alt="" /> : <div className="flow-thumb-fallback"><Video size={27} /> {asset.kind} asset</div>}
               {item?.state === 'processing' && <span className="flow-card-progress" style={{ '--progress': `${Math.round(item.progress * 100)}%` } as React.CSSProperties}>{Math.round(item.progress * 100)}%</span>}
             </button>
-            <div className="flow-card-copy"><label><input type="checkbox" checked={chosen} disabled={!asset.supported || busy} onChange={() => setSelected((current) => { const next = new Set(current); if (next.has(asset.id)) next.delete(asset.id); else next.add(asset.id); return next; })} /><span><b>{asset.name}</b><small>{asset.projectName} · {formatBytes(asset.size)}</small></span></label>
-              {!asset.supported && <span className="flow-status unsupported">Visible only · not processed</span>}
+            <div className="flow-card-copy"><label><input type="checkbox" checked={chosen} disabled={!asset.supported || busy} onChange={() => setSelected((current) => { const next = new Set(current); if (next.has(asset.id)) next.delete(asset.id); else next.add(asset.id); return next; })} /><span><b>{asset.name}</b><small>{asset.projectName}, {formatBytes(asset.size)}</small></span></label>
+              {!asset.supported && <span className="flow-status unsupported">Visible only, not processed</span>}
               {item && item.state !== 'queued' && <span className={`flow-status ${item.state}`}>{item.state === 'complete' ? <Check size={12} /> : item.state === 'failed' ? <AlertTriangle size={12} /> : null}{item.message}</span>}
               {['complete', 'clean'].includes(item?.state) && <button className="flow-download-one" onClick={() => void downloadOne(asset)}><Download size={13} /> Download</button>}
             </div>
@@ -367,7 +367,7 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
       </div>
 
       <div className="flow-batch-bar">
-        <div><b>{message}</b>{busy && <div className="flow-overall"><i style={{ width: `${Math.round(overallProgress * 100)}%` }} /></div>}</div>
+        <div><b>{message}</b>{busy && <div className="flow-overall"><i style={{ transform: `scaleX(${overallProgress})` }} /></div>}</div>
         {busy ? <button className="flow-cancel" onClick={() => abortRef.current?.abort()}><Square size={13} /> Cancel</button> : <>
           {retryCount > 0 && <button className="flow-secondary" onClick={retryUnfinished}><RefreshCw size={14} /> Retry {retryCount}</button>}
           {completeCount > 0 && <button className="flow-secondary" onClick={() => void downloadZip()}><Download size={15} /> Results ZIP ({completeCount})</button>}
@@ -378,7 +378,7 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
 
       {previewAsset && <div className="flow-preview-modal" role="dialog" aria-modal="true" aria-label={`Preview ${previewAsset.name}`}>
         <div className="flow-preview-panel">
-          <div className="flow-preview-top"><div><b>{previewAsset.name}</b><small>Full image · no crop</small></div><button onClick={() => setPreviewAsset(null)} aria-label="Close preview"><X size={19} /></button></div>
+          <div className="flow-preview-top"><div><b>{previewAsset.name}</b><small>Full image, no crop</small></div><button onClick={() => setPreviewAsset(null)} aria-label="Close preview"><X size={19} /></button></div>
           <div className="flow-full-preview"><AssetImage asset={previewAsset} blob={previewSide === 'after' ? previewResult?.blob : undefined} alt={`${previewSide} preview of ${previewAsset.name}`} /></div>
           <div className="flow-preview-actions">
             <div className="compare-toggle static"><button className={previewSide === 'before' ? 'active' : ''} onClick={() => setPreviewSide('before')}>Before</button><button className={previewSide === 'after' ? 'active' : ''} disabled={!previewResult} onClick={() => setPreviewSide('after')}>After</button></div>
