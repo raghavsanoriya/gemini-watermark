@@ -15,8 +15,9 @@ import {
   Video,
   X,
 } from 'lucide-react';
-import { formatBytes, isAbortError, needsVideoOverride, ProcessorError, validateMediaFile } from '@/lib/media';
+import { decodeHeicToPng, formatBytes, isAbortError, isHeic, needsVideoOverride, ProcessorError, validateMediaFile } from '@/lib/media';
 import { processImage } from '@/lib/processors/image';
+import { processImageOnServer, SERVER_MAX_UPLOAD_BYTES, SERVER_MODE } from '@/lib/server-client';
 import type { MediaKind, ProcessingJob, ProcessorResult } from '@/types/media';
 
 const initialJob: ProcessingJob = { phase: 'idle', progress: 0, message: '' };
@@ -49,6 +50,9 @@ export function MediaWorkspace() {
   const [duration, setDuration] = useState<number | null>(null);
   const [showWarning, setShowWarning] = useState(false);
   const [comparison, setComparison] = useState<'before' | 'after'>('after');
+  const [target, setTarget] = useState<'device' | 'server'>('device');
+  const serverAvailable = SERVER_MODE && kind === 'image' && !!file && file.size <= SERVER_MAX_UPLOAD_BYTES;
+  const useServer = serverAvailable && target === 'server';
 
   useEffect(() => () => {
     abortRef.current?.abort();
@@ -83,11 +87,14 @@ export function MediaWorkspace() {
     setJob(initialJob);
   };
 
-  const acceptFile = async (next: File | undefined) => {
-    if (!next) return;
+  const acceptFile = async (picked: File | undefined) => {
+    if (!picked) return;
     setJob({ phase: 'validating', progress: 0, message: 'Checking file…' });
     try {
-      const nextKind = validateMediaFile(next);
+      const nextKind = validateMediaFile(picked);
+      // Most browsers cannot preview HEIC, so decode it to PNG up front.
+      if (isHeic(picked)) setJob({ phase: 'validating', progress: 0, message: 'Decoding HEIC photo locally…' });
+      const next = isHeic(picked) ? await decodeHeicToPng(picked) : picked;
       revokeObjectUrl(previewUrl);
       revokeObjectUrl(result?.url);
       const url = createObjectUrl(next);
@@ -118,9 +125,11 @@ export function MediaWorkspace() {
     setJob({ phase: 'detecting', progress: 0.01, message: 'Starting local detection…' });
 
     try {
-      const processor = kind === 'image'
-        ? processImage
-        : (await import('@/lib/processors/video')).processVideo;
+      const processor = useServer
+        ? processImageOnServer
+        : kind === 'image'
+          ? processImage
+          : (await import('@/lib/processors/video')).processVideo;
       const processed = await processor(file, {
         signal: controller.signal,
         onProgress: ({ phase, progress, message }) => setJob({ phase, progress, message }),
@@ -184,7 +193,7 @@ export function MediaWorkspace() {
       <input
         ref={inputRef}
         type="file"
-        accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime,video/x-matroska,video/mpeg"
+        accept="image/png,image/jpeg,image/webp,image/heic,image/heif,.heic,.heif,video/mp4,video/webm,video/quicktime,video/x-matroska,video/mpeg"
         onChange={(event) => void acceptFile(event.target.files?.[0])}
         hidden
       />
@@ -194,7 +203,7 @@ export function MediaWorkspace() {
           <div className="image-orbs"><div className="file-card left"><span>✦</span><small>GEMINI</small></div><div className="connector"><span>→</span></div><div className="file-card right"><ImagePlus size={23} /><small>CLEAN</small></div></div>
           <h2>Drop a file here</h2><p>image or video — processed only on this device</p>
           <button className="upload-btn" onClick={() => inputRef.current?.click()}><Upload size={18} /> Choose file</button>
-          <small className="formats">PNG, JPG, WEBP, MP4, MOV, WEBM, MKV, MPG or MPEG</small>
+          <small className="formats">PNG, JPG, WEBP, HEIC, MP4, MOV, WEBM, MKV, MPG or MPEG</small>
           {job.phase === 'failed' && <div className="inline-error" role="alert"><AlertTriangle size={16} />{job.message}</div>}
         </>
       ) : (
@@ -231,6 +240,12 @@ export function MediaWorkspace() {
           <div className="file-actions">
             <div className="file-meta"><b>{file.name}</b><small>{formatBytes(file.size)}{duration ? ` · ${duration.toFixed(1)} sec` : ''} · stays on your device</small></div>
             {result?.detection.size && <div className="detection-chip"><Sparkles size={13} /> {result.detection.size}px calibrated mark</div>}
+            {job.phase === 'ready' && SERVER_MODE && kind === 'image' && (
+              <div className="target-toggle" role="radiogroup" aria-label="Where to process">
+                <button role="radio" aria-checked={!useServer} className={!useServer ? 'active' : ''} onClick={() => setTarget('device')}>This device</button>
+                <button role="radio" aria-checked={useServer} className={useServer ? 'active' : ''} disabled={!serverAvailable} title={serverAvailable ? 'Uploads this image; it is cleaned in memory and not stored.' : `Server processing accepts images up to ${Math.round(SERVER_MAX_UPLOAD_BYTES / 1024 / 1024)} MB.`} onClick={() => setTarget('server')}>Upload to server</button>
+              </div>
+            )}
             {job.phase === 'ready' && <button className="process-btn" onClick={() => void startProcessing()}>{kind === 'video' ? <Video size={17} /> : <Sparkles size={17} />} Remove visible mark</button>}
             {job.phase === 'complete' && <button className="process-btn" onClick={download}><Download size={17} /> Download {kind}</button>}
             {(job.phase === 'failed' || job.phase === 'cancelled') && <button className="process-btn secondary" onClick={() => void startProcessing(true)}><RefreshCw size={16} /> Try again</button>}

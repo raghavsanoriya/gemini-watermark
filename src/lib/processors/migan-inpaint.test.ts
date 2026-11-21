@@ -3,7 +3,10 @@ import type { PixelImageData } from './image-panorama-fallback';
 import {
   compositeMiganWindow,
   createMiganMask,
+  isProportionateRepair,
+  meanMaskedChange,
   packMiganWindow,
+  wantsContentAwareRepair,
   windowForMask,
 } from './migan-inpaint';
 
@@ -57,5 +60,38 @@ describe('MI-GAN fallback preparation', () => {
     const result = compositeMiganWindow(source, mask, window, model);
     expect(result.data[(200 * 320 + 210) * 4]).toBe(123);
     expect(result.data[(10 * 320 + 10) * 4]).toBe(source.data[(10 * 320 + 10) * 4]);
+  });
+});
+
+describe('MI-GAN acceptance', () => {
+  const position = { x: 24, y: 24, width: 48, height: 48 };
+
+  it('only runs when a content-aware repair was applied or attempted', () => {
+    expect(wantsContentAwareRepair({ position, repairMode: 'content-aware-telea' } as never)).toBe(true);
+    expect(wantsContentAwareRepair({ position, repairMode: 'reverse-alpha', repairSafety: 'rejected' } as never)).toBe(true);
+    expect(wantsContentAwareRepair({ position, repairMode: 'reverse-alpha', repairSafety: 'not-needed' } as never)).toBe(false);
+    expect(wantsContentAwareRepair({ position: null, repairMode: 'content-aware-telea' } as never)).toBe(false);
+  });
+});
+
+describe('MI-GAN proportionality guard', () => {
+  it('rejects a fill that rewrites a corner with no measurable leftover', () => {
+    const position = { x: 8, y: 8, width: 16, height: 16 };
+    const source = pixels(32, 32);
+    const reverseAlpha = pixels(32, 32);
+    const mask = new Uint8Array(32 * 32);
+    for (let y = 8; y < 24; y += 1) mask.fill(1, y * 32 + 8, y * 32 + 24);
+    const hallucinated = pixels(32, 32);
+    const gentle = pixels(32, 32);
+    for (let pixel = 0; pixel < mask.length; pixel += 1) {
+      if (!mask[pixel]) continue;
+      for (let channel = 0; channel < 3; channel += 1) {
+        hallucinated.data[pixel * 4 + channel] += 60;
+        gentle.data[pixel * 4 + channel] += 4;
+      }
+    }
+    expect(meanMaskedChange(hallucinated, reverseAlpha, mask)).toBe(60);
+    expect(isProportionateRepair(source, reverseAlpha, hallucinated, mask, position)).toBe(false);
+    expect(isProportionateRepair(source, reverseAlpha, gentle, mask, position)).toBe(true);
   });
 });

@@ -308,7 +308,7 @@ export function shouldRepairDetectedResidual(meta: ExtendedMeta): boolean {
     confidence < 0.2;
 }
 
-function hasDestructiveRemovalDamage(meta: ExtendedMeta): boolean {
+export function hasDestructiveRemovalDamage(meta: ExtendedMeta): boolean {
   const damage = meta.qualitySignals?.damageComponents;
   return (damage?.nearBlack ?? 0) >= DAMAGE_REPAIR_THRESHOLD ||
     (damage?.nearWhite ?? 0) >= DAMAGE_REPAIR_THRESHOLD ||
@@ -407,14 +407,21 @@ export function residualMarkLevels(
 }
 
 /** Leftover glow or imprint at or above this many luminance levels is visible. */
-const VISIBLE_RESIDUAL_LEVELS = 10;
+export const VISIBLE_RESIDUAL_LEVELS = 10;
+/**
+ * Stronger evidence required when the engine itself reports a clean result: busy
+ * textures can correlate with the mark's shape by chance and score 10-16 levels
+ * even after a perfect removal, while real missed leftovers score far higher.
+ */
+export const UNFLAGGED_RESIDUAL_LEVELS = 20;
 
 export function hasVisibleResidual(
   original: PixelImageData,
   result: PixelImageData,
-  position: NonNullable<WatermarkMeta['position']>
+  position: NonNullable<WatermarkMeta['position']>,
+  threshold = VISIBLE_RESIDUAL_LEVELS,
 ): boolean {
-  return Math.abs(residualMarkLevels(original, result, position)) >= VISIBLE_RESIDUAL_LEVELS;
+  return Math.abs(residualMarkLevels(original, result, position)) >= threshold;
 }
 
 function getSurroundingLuminanceStats(
@@ -497,9 +504,10 @@ export function repairDetectedResidual(
   // The engine's residual flag is a heuristic: it fires on clean dark corners and
   // misses leftovers on resized images. Repaint when the removal clipped pixels or
   // the mark is still measurably visible; otherwise keep the exact reverse-alpha result.
+  const engineFlagged = shouldRepairDetectedResidual(meta);
   const needsRepair = isRepairableSelection(meta) && !!meta.position && (
-    (shouldRepairDetectedResidual(meta) && hasDestructiveRemovalDamage(meta)) ||
-    hasVisibleResidual(source, result.imageData, meta.position)
+    (engineFlagged && (hasDestructiveRemovalDamage(meta) || hasVisibleResidual(source, result.imageData, meta.position))) ||
+    hasVisibleResidual(source, result.imageData, meta.position, UNFLAGGED_RESIDUAL_LEVELS)
   );
   if (!needsRepair || !meta.position) {
     return {

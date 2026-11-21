@@ -1,6 +1,6 @@
 import { BlobReader, BlobWriter, TextReader, ZipWriter } from '@zip.js/zip.js';
 import { describe, expect, it } from 'vitest';
-import { createFlowManifest, createResultsZip, importFlowZip, normalizeArchivePath, type ArchiveFile } from './archive';
+import { createFlowManifest, createResultsZip, importFlowZip, importImageFiles, normalizeArchivePath, type ArchiveFile } from './archive';
 
 function archiveFile(path: string, content = 'data', type = 'application/octet-stream'): ArchiveFile {
   const file = new File([content], path.split('/').pop()!, { type });
@@ -63,5 +63,32 @@ describe('Flow archive parsing', () => {
     expect(entries[0].filename).toBe('Ungrouped media/media/a.png');
     if (!entries[0].directory) expect(await entries[0].getData(new TextWriter())).toBe('clean');
     await reader.close();
+  });
+});
+
+describe('loose image batches', () => {
+  it('imports picked images as one flat batch that keeps file names in the ZIP', async () => {
+    const files = [
+      new File(['a'], 'one.png', { type: 'image/png' }),
+      new File(['b'], 'two.jpg', { type: 'image/jpeg' }),
+      new File(['c'], 'notes.txt', { type: 'text/plain' }),
+    ];
+    const manifest = await importImageFiles(files);
+    expect(manifest.source).toEqual({ kind: 'local-files', label: '2 selected images' });
+    expect(manifest.assets.map((asset) => [asset.name, asset.outputPath, asset.supported])).toEqual([
+      ['one.png', 'one.png', true],
+      ['two.jpg', 'two.jpg', true],
+    ]);
+    expect(manifest.skippedEntries).toBe(1);
+  });
+});
+
+describe('result ZIP names', () => {
+  it('gives converted HEIC results a .png name', async () => {
+    const [heic] = (await importImageFiles([new File(['h'], 'IMG_1.heic', { type: '' })])).assets;
+    const zip = await createResultsZip([{ asset: heic, blob: new Blob(['png'], { type: 'image/png' }) }]);
+    const { ZipReader, BlobReader: Reader } = await import('@zip.js/zip.js');
+    const entries = await new ZipReader(new Reader(zip)).getEntries();
+    expect(entries.map((entry) => entry.filename)).toEqual(['IMG_1.png']);
   });
 });

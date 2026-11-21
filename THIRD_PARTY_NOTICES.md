@@ -15,5 +15,18 @@ downloaded during development/build from the upstream Hugging Face repository
 and verified against SHA-256
 `6f1f3530a1a2324b19752018ce756088b07973cda8d7d890034ace5c8a48c40b`.
 
-Both licenses permit use, copying, modification, and distribution subject to
+## heic2any and libheif
+
+HEIC/HEIF photos are decoded in the browser with
+[heic2any](https://github.com/alexcorvi/heic2any) (MIT License), which bundles a
+JavaScript build of [libheif](https://github.com/strukturag/libheif) (LGPL-3.0).
+It is loaded only when a HEIC photo is opened.
+
+## sharp and libvips
+
+Server mode decodes and encodes images with [sharp](https://github.com/lovell/sharp)
+(Apache-2.0), which uses prebuilt [libvips](https://github.com/libvips/libvips)
+binaries (LGPL-3.0).
+
+The Telea and MI-GAN licenses permit use, copying, modification, and distribution subject to
 their respective copyright and permission notices.

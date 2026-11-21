@@ -5,8 +5,11 @@ A Next.js, local-first tool for repairing known visible Gemini, Veo, and Google 
 ## How it works
 
 - Images use calibrated 36/48/96-pixel alpha maps and reverse-alpha restoration from `@pilio/gemini-watermark-remover`.
+- A residual check measures how much of the mark is still visible after reverse-alpha removal. Only then is the corner repainted with the MI-GAN inpainting model. Telea inpainting is kept only as an offline fallback for clipped or black output.
+- **Batch images**: drop or choose many images, clean them one by one, and download one ZIP.
+- **HEIC photos** are decoded to PNG locally (natively in Safari, with heic2any elsewhere) before cleaning.
 - Videos are decoded and encoded locally with Mediabunny and WebCodecs, with compatible audio packets copied into the MP4 result.
-- Media stays in browser memory. There are no upload routes, API keys, accounts, credits, or storage services.
+- In the default (local) mode, media stays in browser memory and nothing is uploaded. No account is ever needed. Optional server mode is described below.
 - Invisible SynthID and unrelated watermarks are intentionally out of scope.
 
 ## Flow project imports
@@ -45,6 +48,23 @@ With a local server running on port 3000, the Playwright smoke test covers ZIP i
 npm run test:browser
 ```
 
+## Server mode (optional)
+
+Builds that are not a static export (`next dev`, `next start`, Vercel) add an optional **Upload to server** choice next to the free local mode, in the single-file view:
+
+- No accounts, credits, or storage. The server cleans the image **in memory** with the same pipeline as the browser (reverse-alpha, residual check, MI-GAN) and returns the PNG in the same response. Nothing is written to disk.
+- Images only, up to 4 MB by default (Vercel rejects request bodies over 4.5 MB). Larger files and video stay on the free local mode.
+- A simple per-address limit (20 images per 10 minutes by default) curbs abuse. It is kept in memory per server instance, so it is best-effort rather than an exact global quota.
+
+The API route is `src/app/api/clean/route.server.ts`. The `.server.ts` suffix keeps it out of the GitHub Pages export, which stays fully local.
+
+| Variable | Purpose |
+| --- | --- |
+| `GEMCLEAN_MAX_UPLOAD_MB` and `NEXT_PUBLIC_SERVER_MAX_UPLOAD_MB` | Upload limit (server and UI). Keep them equal and at most 4 on Vercel. |
+| `GEMCLEAN_RATE_LIMIT`, `GEMCLEAN_RATE_WINDOW_MINUTES` | Images per address per window. |
+
+Deploying to Vercel needs no environment variables. The build downloads the MI-GAN model, and `outputFileTracingIncludes` ships it with the clean function.
+
 ## Optional Google Drive Picker setup
 
 Local ZIP and folder imports need no credentials. To enable the Drive button:
@@ -71,10 +91,10 @@ To use Takeout-to-Drive, export the Flow data with Google Takeout (or download a
 - ZIP CRC and overlapping-entry checks are enabled.
 - Metadata files are capped at 8 MB and individual archive entries above 512 MB are skipped.
 - `projects.json` and adjacent `_metadata.json` files are parsed defensively. Unknown layouts fall back to **Ungrouped media** instead of dropping images.
-- PNG, JPEG, and WebP images are processed. Supported video/audio file types are displayed as unsupported for this phase.
+- PNG, JPEG, WebP, and HEIC images are processed. Supported video/audio file types are displayed as unsupported for this phase.
 
 ## Deployment
 
-Pushes to `main` build a static Next.js export and deploy it to GitHub Pages at `https://raghavsanoriya.github.io/gemini-watermark/`. The workflow runs lint, type checking, and unit tests before deployment. Add the optional Google values as GitHub Actions repository variables if Drive Picker is wanted on Pages.
+Pushes to `main` build a static, local-only Next.js export (no server mode) and deploy it to GitHub Pages at `https://raghavsanoriya.github.io/gemini-watermark/`. The workflow runs lint, type checking, and unit tests before deployment. Add the optional Google values as GitHub Actions repository variables if Drive Picker is wanted on Pages.
 
 The same repository can also be imported into Vercel. Standard Next.js build settings are detected automatically. No environment variables are required for local ZIP/folder imports; configure the three public Google variables above only if Drive Picker is wanted.

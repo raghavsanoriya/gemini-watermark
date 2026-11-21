@@ -19,6 +19,8 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   webp: 'image/webp',
+  heic: 'image/heic',
+  heif: 'image/heif',
   mp4: 'video/mp4',
   mov: 'video/quicktime',
   webm: 'video/webm',
@@ -73,6 +75,12 @@ function dirname(path: string): string {
   parts.pop();
   return parts.join('/');
 }
+
+const EXTENSION_BY_RESULT_TYPE: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+};
 
 function classify(path: string): { kind: FlowAssetKind; mimeType: string; supported: boolean } {
   const mimeType = MIME_BY_EXTENSION[extensionOf(path)] ?? 'application/octet-stream';
@@ -296,11 +304,44 @@ export async function importFlowFolder(files: File[]): Promise<FlowArchiveManife
   return createFlowManifest({ kind: 'local-folder', label: 'Selected Flow folder' }, archiveFiles);
 }
 
+/**
+ * Imports loose images picked or dropped by the user as one flat batch. Results
+ * keep their original file names in the ZIP instead of Flow project folders.
+ */
+export async function importImageFiles(files: File[]): Promise<FlowArchiveManifest> {
+  const archiveFiles: ArchiveFile[] = [];
+  for (const file of files) {
+    const path = normalizeArchivePath(file.name);
+    if (!path) throw new Error(`Unsafe file name: ${file.name}`);
+    const info = classify(path);
+    archiveFiles.push({
+      path,
+      size: file.size,
+      mimeType: info.mimeType,
+      readText: () => file.text(),
+      loadFile: async () => file.type === info.mimeType ? file : makeFile(file, path, info.mimeType),
+    });
+  }
+  const manifest = await createFlowManifest({ kind: 'local-files', label: '' }, archiveFiles);
+  const count = manifest.assets.length;
+  return {
+    ...manifest,
+    source: { kind: 'local-files', label: `${count} selected image${count === 1 ? '' : 's'}` },
+    assets: manifest.assets.map((asset) => ({ ...asset, projectName: 'Selected images', outputPath: asset.sourcePath })),
+    projects: manifest.projects.map((project) => ({ ...project, name: 'Selected images' })),
+  };
+}
+
 export async function createResultsZip(results: FlowZipResult[]): Promise<Blob> {
   const writer = new ZipWriter(new BlobWriter('application/zip'));
   const used = new Set<string>();
   for (const { asset, blob } of results) {
     let path = normalizeArchivePath(asset.outputPath) ?? asset.name;
+    // A converted result (e.g. HEIC cleaned to PNG) keeps its name but gets a matching extension.
+    const resultExtension = EXTENSION_BY_RESULT_TYPE[blob.type];
+    if (resultExtension && MIME_BY_EXTENSION[extensionOf(path)] !== blob.type && !(blob.type === 'image/jpeg' && /^jpe?g$/.test(extensionOf(path)))) {
+      path = `${path.replace(/\.[^./]+$/, '')}.${resultExtension}`;
+    }
     if (used.has(path.toLowerCase())) {
       const extension = extensionOf(path);
       const suffix = extension ? `.${extension}` : '';

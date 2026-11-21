@@ -1,4 +1,4 @@
-import { outputFileName, ProcessorError } from '@/lib/media';
+import { decodeHeicToPng, isHeic, outputFileName, ProcessorError } from '@/lib/media';
 import type { ProcessorOptions, ProcessorResult, WatermarkDetection } from '@/types/media';
 
 interface WorkerSuccess {
@@ -65,8 +65,13 @@ function runImageWorker(imageData: ImageData, signal: AbortSignal): Promise<Work
   });
 }
 
-export async function processImage(file: File, options: ProcessorOptions): Promise<ProcessorResult> {
+export async function processImage(input: File, options: ProcessorOptions): Promise<ProcessorResult> {
   const { signal, onProgress } = options;
+  let file = input;
+  if (isHeic(input)) {
+    onProgress({ phase: 'detecting', progress: 0.02, message: 'Decoding HEIC photo locally…' });
+    file = await decodeHeicToPng(input);
+  }
   onProgress({ phase: 'detecting', progress: 0.04, message: 'Reading image pixels…' });
 
   let bitmap: ImageBitmap;

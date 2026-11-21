@@ -6,16 +6,18 @@
 import type { ImageDataRemovalResult, WatermarkMeta } from '@pilio/gemini-watermark-remover';
 import type { ImageRepairMode } from '@/types/media';
 import type { ExtendedMeta, PixelImageData } from './image-panorama-fallback';
-import { isBoundedTextureRepairSafe } from './image-panorama-fallback';
+import { isBoundedTextureRepairSafe, residualMarkLevels, VISIBLE_RESIDUAL_LEVELS } from './image-panorama-fallback';
 
 const ALIGNMENT = 8;
 const MIN_WINDOW = 256;
 const MAX_WINDOW = 512;
 const MODEL_PATH = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/vendor/models/migan-pipeline-v2.onnx`;
 
-type Session = {
+export type Session = {
   run: (feeds: Record<string, unknown>) => Promise<Record<string, { data: Uint8Array }>>;
 };
+
+export type MiganSessionFactory = () => Promise<Session>;
 
 let sessionPromise: Promise<Session> | undefined;
 
@@ -25,17 +27,17 @@ const clonePixels = (image: PixelImageData): PixelImageData => ({
   data: new Uint8ClampedArray(image.data),
 });
 
-async function loadSession(): Promise<Session> {
-  if (!sessionPromise) {
-    sessionPromise = (async () => {
-      const ort = await import('onnxruntime-web/wasm');
-      ort.env.wasm.numThreads = 1;
-      return await ort.InferenceSession.create(MODEL_PATH, {
-        executionProviders: ['wasm'],
-        graphOptimizationLevel: 'all',
-      }) as unknown as Session;
-    })();
-  }
+const browserSessionFactory: MiganSessionFactory = async () => {
+  const ort = await import('onnxruntime-web/wasm');
+  ort.env.wasm.numThreads = 1;
+  return await ort.InferenceSession.create(MODEL_PATH, {
+    executionProviders: ['wasm'],
+    graphOptimizationLevel: 'all',
+  }) as unknown as Session;
+};
+
+async function loadSession(factory: MiganSessionFactory): Promise<Session> {
+  if (!sessionPromise) sessionPromise = factory();
   try {
     return await sessionPromise;
   } catch (error) {
@@ -200,40 +202,85 @@ export function boundaryDiscontinuity(image: PixelImageData, mask: Uint8Array): 
   return comparisons > 0 ? difference / comparisons : Number.POSITIVE_INFINITY;
 }
 
-export async function improveWithMigan(
+/**
+ * Whether the pipeline wanted a content-aware repair: either a Telea fill was
+ * applied, or one was attempted and rejected by the safety gate.
+ */
+export function wantsContentAwareRepair(meta: ExtendedMeta): boolean {
+  return !!meta.position && (meta.repairMode === 'content-aware-telea' || meta.repairSafety === 'rejected');
+}
+
+/**
+ * Runs MI-GAN over the mark and accepts it when it passes the same safety gate as
+ * Telea. It only runs after the pipeline confirmed a visible leftover or damage,
+ * and it repaints the masked pixels entirely, so no residual comparison is made.
+ * Returns null when MI-GAN is not applicable or its result is not acceptable.
+ */
+export async function repairWithMigan(
   source: PixelImageData,
   reverseAlpha: PixelImageData,
-  teleaResult: ImageDataRemovalResult,
-): Promise<ImageDataRemovalResult> {
-  const meta = teleaResult.meta as ExtendedMeta;
-  if (meta.repairMode !== 'content-aware-telea' || !meta.position) return teleaResult;
+  current: ImageDataRemovalResult,
+  sessionFactory: MiganSessionFactory = browserSessionFactory,
+): Promise<ImageDataRemovalResult | null> {
+  const meta = current.meta as ExtendedMeta;
+  if (!wantsContentAwareRepair(meta) || !meta.position) return null;
   const mask = createMiganMask(source, reverseAlpha, meta.position);
   const window = windowForMask(source, mask);
-  if (!window) return teleaResult;
+  if (!window) return null;
 
   const packed = packMiganWindow(source, mask, window);
   const ort = await import('onnxruntime-web/wasm');
-  const session = await loadSession();
+  const session = await loadSession(sessionFactory);
   const tensors = await session.run({
     image: new ort.Tensor('uint8', packed.image, [1, 3, window.height, window.width]),
     mask: new ort.Tensor('uint8', packed.mask, [1, 1, window.height, window.width]),
   });
   const modelOutput = tensors.result?.data;
-  if (!(modelOutput instanceof Uint8Array)) return teleaResult;
+  if (!(modelOutput instanceof Uint8Array)) return null;
   const candidate = compositeMiganWindow(source, mask, window, modelOutput);
-  if (!isBoundedTextureRepairSafe(source, reverseAlpha, candidate, meta.position)) return teleaResult;
-
-  const teleaBoundary = boundaryDiscontinuity(teleaResult.imageData, mask);
-  const miganBoundary = boundaryDiscontinuity(candidate, mask);
-  if (miganBoundary > teleaBoundary * 1.05) return teleaResult;
+  if (!isBoundedTextureRepairSafe(source, reverseAlpha, candidate, meta.position)) return null;
+  if (!isProportionateRepair(source, reverseAlpha, candidate, mask, meta.position)) return null;
 
   return {
     imageData: candidate,
     meta: {
       ...meta,
-      source: `${meta.source}+migan-content-aware`,
+      applied: true,
+      skipReason: null,
+      source: `${meta.source.replace('+telea-content-aware-repair', '')}+migan-content-aware`,
       repairMode: 'content-aware-migan' as ImageRepairMode,
       repairSafety: 'passed',
+      qualityWarning: null,
     } as WatermarkMeta,
   };
+}
+
+/** Mean per-channel change between two images inside the repair mask. */
+export function meanMaskedChange(a: PixelImageData, b: PixelImageData, mask: Uint8Array): number {
+  let total = 0;
+  let count = 0;
+  for (let pixel = 0; pixel < mask.length; pixel += 1) {
+    if (mask[pixel] === 0) continue;
+    const index = pixel * 4;
+    total += (Math.abs(a.data[index] - b.data[index]) + Math.abs(a.data[index + 1] - b.data[index + 1]) +
+      Math.abs(a.data[index + 2] - b.data[index + 2])) / 3;
+    count += 1;
+  }
+  return count ? total / count : 0;
+}
+
+/**
+ * A fill should change the corner about as much as the leftover it removes. A
+ * fill that rewrites a busy texture far beyond the measured residual is a
+ * hallucination, not a repair, so the reverse-alpha result is kept instead.
+ */
+export function isProportionateRepair(
+  source: PixelImageData,
+  reverseAlpha: PixelImageData,
+  candidate: PixelImageData,
+  mask: Uint8Array,
+  position: NonNullable<WatermarkMeta['position']>,
+): boolean {
+  const residual = Math.abs(residualMarkLevels(source, reverseAlpha, position));
+  return meanMaskedChange(candidate, reverseAlpha, mask) <= Math.max(VISIBLE_RESIDUAL_LEVELS, residual * 0.8);
 }

@@ -17,7 +17,7 @@ import {
   Video,
   X,
 } from 'lucide-react';
-import { formatBytes } from '@/lib/media';
+import { decodeHeicToPng, formatBytes, isHeic } from '@/lib/media';
 import { processImage } from '@/lib/processors/image';
 import type { FlowArchiveManifest, FlowAsset, FlowAssetBatchItem } from '@/types/flow';
 
@@ -37,7 +37,8 @@ function AssetImage({ asset, blob, alt }: { asset: FlowAsset; blob?: Blob; alt: 
     let objectUrl: string | undefined;
     void (async () => {
       try {
-        const source = blob ?? await asset.loadFile();
+        const loaded = blob ?? await asset.loadFile();
+        const source = !blob && loaded instanceof File && isHeic(loaded) ? await decodeHeicToPng(loaded) : loaded;
         objectUrl = URL.createObjectURL(source);
         if (active) setUrl(objectUrl);
         else URL.revokeObjectURL(objectUrl);
@@ -64,7 +65,11 @@ function downloadBlob(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
-export function FlowProjectWorkspace() {
+const BATCH_IMAGE_ACCEPT = 'image/png,image/jpeg,image/webp,image/heic,image/heif,.png,.jpg,.jpeg,.webp,.heic,.heif';
+
+export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 'images' }) {
+  const imagesInputRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const manifestRef = useRef<FlowArchiveManifest | null>(null);
@@ -114,6 +119,23 @@ export function FlowProjectWorkspace() {
     setMessage('');
     if (zipInputRef.current) zipInputRef.current.value = '';
     if (folderInputRef.current) folderInputRef.current.value = '';
+    if (imagesInputRef.current) imagesInputRef.current.value = '';
+  };
+
+  const importImages = async (files: File[]) => {
+    if (!files.length) return;
+    setImporting(true);
+    setError('');
+    try {
+      const { importImageFiles } = await import('@/lib/flow/archive');
+      const next = await importImageFiles(files);
+      if (!next.assets.some((asset) => asset.supported)) throw new Error('Choose PNG, JPG, WEBP, or HEIC images.');
+      await replaceManifest(next);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The images could not be opened.');
+    } finally {
+      setImporting(false);
+    }
   };
 
   const importZip = async (file?: File) => {
@@ -256,8 +278,10 @@ export function FlowProjectWorkspace() {
         blob: batch[asset.id]?.result?.blob ?? await asset.loadFile(),
       })));
       const { createResultsZip } = await import('@/lib/flow/archive');
-      downloadBlob(await createResultsZip(results), 'gemclean-flow-results.zip');
-      setMessage(`Downloaded ${results.length} result${results.length === 1 ? '' : 's'} with project folders preserved.`);
+      downloadBlob(await createResultsZip(results), variant === 'images' ? 'gemclean-results.zip' : 'gemclean-flow-results.zip');
+      setMessage(variant === 'images'
+        ? `Downloaded ${results.length} result${results.length === 1 ? '' : 's'}.`
+        : `Downloaded ${results.length} result${results.length === 1 ? '' : 's'} with project folders preserved.`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'The result ZIP could not be created.');
     }
@@ -266,6 +290,28 @@ export function FlowProjectWorkspace() {
   const completeCount = Object.values(batch).filter((item) => ['complete', 'clean'].includes(item.state)).length;
   const retryCount = Object.values(batch).filter((item) => ['failed', 'cancelled'].includes(item.state)).length;
   const previewResult = previewAsset ? batch[previewAsset.id]?.result : undefined;
+
+  if (!manifest && variant === 'images') {
+    return (
+      <div
+        className={`workspace flow-import-workspace ${dragging ? 'dragging' : ''}`}
+        onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(event) => { event.preventDefault(); setDragging(false); void importImages(Array.from(event.dataTransfer.files)); }}
+      >
+        <div className="flow-import-icon"><ImageIcon size={34} /></div>
+        <h2>Clean many images at once</h2>
+        <p>Drop or choose several Gemini images. They are cleaned one by one on this device and can be downloaded as one ZIP.</p>
+        <input ref={imagesInputRef} type="file" accept={BATCH_IMAGE_ACCEPT} multiple hidden onChange={(event) => void importImages(Array.from(event.target.files ?? []))} />
+        <div className="flow-import-actions">
+          <button onClick={() => imagesInputRef.current?.click()} disabled={importing}><ImageIcon size={18} /> Choose images</button>
+        </div>
+        {importing && <div className="flow-importing" role="status"><LoaderCircle className="spin" size={18} /> Opening images locally…</div>}
+        <div className="flow-privacy"><ShieldCheck size={16} /><span>Images stay in browser memory. Nothing is uploaded.</span></div>
+        {error && <div className="inline-error" role="alert"><AlertTriangle size={16} />{error}</div>}
+      </div>
+    );
+  }
 
   if (!manifest) {
     return (
@@ -291,12 +337,12 @@ export function FlowProjectWorkspace() {
   return (
     <div className="workspace flow-gallery-workspace">
       <div className="flow-gallery-header">
-        <div><span className="flow-source"><FileArchive size={15} /> {manifest.source.label}</span><h2>Review imported media</h2><p>{manifest.projects.length} project{manifest.projects.length === 1 ? '' : 's'} · {manifest.assets.length} media items · processed locally</p></div>
+        <div><span className="flow-source"><FileArchive size={15} /> {manifest.source.label}</span><h2>{variant === 'images' ? 'Review selected images' : 'Review imported media'}</h2><p>{variant === 'images' ? `${manifest.assets.length} image${manifest.assets.length === 1 ? '' : 's'}` : `${manifest.projects.length} project${manifest.projects.length === 1 ? '' : 's'} · ${manifest.assets.length} media items`} · processed locally</p></div>
         <button className="flow-close" onClick={() => void reset()} aria-label="Close imported project"><X size={18} /></button>
       </div>
 
       <div className="flow-toolbar">
-        <label>Project<select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}><option value="all">All projects</option>{manifest.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+        {variant === 'flow' && <label>Project<select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}><option value="all">All projects</option>{manifest.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>}
         <button className="flow-select-all" onClick={toggleAllVisible}>{visibleSelected === visibleSupported.length && visibleSupported.length ? 'Clear visible' : 'Select visible'} <span>{visibleSelected}/{visibleSupported.length}</span></button>
       </div>
 

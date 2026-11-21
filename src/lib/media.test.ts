@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   SOFT_VIDEO_BYTES,
   getMediaKind,
+  isHeic,
   needsVideoOverride,
   outputFileName,
   validateMediaFile,
@@ -12,6 +13,14 @@ describe('media validation', () => {
     expect(getMediaKind({ type: 'image/png' })).toBe('image');
     expect(getMediaKind({ type: 'video/mp4' })).toBe('video');
     expect(getMediaKind({ type: 'application/pdf' })).toBeNull();
+  });
+
+  it('recognizes HEIC photos by type or by extension when the type is empty', () => {
+    expect(isHeic({ type: 'image/heic' })).toBe(true);
+    expect(isHeic({ type: '', name: 'IMG_0001.HEIC' })).toBe(true);
+    expect(isHeic({ type: '', name: 'photo.heif' })).toBe(true);
+    expect(isHeic({ type: 'image/png', name: 'photo.png' })).toBe(false);
+    expect(getMediaKind({ type: '', name: 'IMG_0001.heic' })).toBe('image');
   });
 
   it('rejects unsupported and empty files', () => {

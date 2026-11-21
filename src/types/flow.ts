@@ -3,6 +3,7 @@ import type { ProcessorResult } from '@/types/media';
 export type FlowImportSource =
   | { kind: 'local-zip'; label: string }
   | { kind: 'local-folder'; label: string }
+  | { kind: 'local-files'; label: string }
   | { kind: 'google-drive'; label: string; fileId: string };
 
 export type FlowAssetKind = 'image' | 'video' | 'audio' | 'other';

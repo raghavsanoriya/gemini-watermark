@@ -26,6 +26,10 @@ h1 em,h2 em { font-family:var(--font-serif),serif; }
 .preview-shell.full-image-preview { height:auto; min-height:0; overflow:visible; display:block; background:transparent; }
 .preview-shell.full-image-preview img { display:block; width:auto; max-width:100%; height:auto; max-height:75vh; margin-inline:auto; object-fit:contain; border-radius:15px; }
 .workspace-hub { scroll-margin-top:24px; }
+.target-toggle { display:flex; gap:4px; padding:4px; border:1px solid var(--line); border-radius:10px; background:#101219; }
+.target-toggle button { border:0; border-radius:7px; padding:8px 11px; background:transparent; color:#9ea1aa; font-size:12px; font-weight:700; cursor:pointer; }
+.target-toggle button.active { color:var(--ink); background:var(--lime); }
+.target-toggle button:disabled { opacity:.5; cursor:default; }
 .workspace-tabs { width:max-content; max-width:100%; margin:0 auto 12px; padding:4px; display:flex; gap:4px; border:1px solid var(--line); border-radius:12px; background:#101219; }
 .workspace-tabs button { border:0; border-radius:8px; padding:9px 13px; color:#9ea1aa; background:transparent; cursor:pointer; display:flex; align-items:center; gap:7px; font-size:12px; font-weight:700; }
 .workspace-tabs button.active { color:var(--ink); background:var(--lime); }

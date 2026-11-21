@@ -1,17 +1,25 @@
 'use client';
 
 import { useState } from 'react';
-import { FileArchive, Image as ImageIcon } from 'lucide-react';
+import { FileArchive, Image as ImageIcon, Images } from 'lucide-react';
 import { FlowProjectWorkspace } from '@/components/FlowProjectWorkspace';
 import { MediaWorkspace } from '@/components/MediaWorkspace';
 
+type Mode = 'single' | 'batch' | 'flow';
+
 export function WorkspaceHub() {
-  const [mode, setMode] = useState<'single' | 'flow'>('single');
+  const [mode, setMode] = useState<Mode>('single');
+  const tab = (value: Mode, label: string, icon: React.ReactNode) => (
+    <button role="tab" aria-selected={mode === value} className={mode === value ? 'active' : ''} onClick={() => setMode(value)}>{icon} {label}</button>
+  );
   return <div className="workspace-hub" id="workspace">
     <div className="workspace-tabs" role="tablist" aria-label="Import mode">
-      <button role="tab" aria-selected={mode === 'single'} className={mode === 'single' ? 'active' : ''} onClick={() => setMode('single')}><ImageIcon size={16} /> Single file</button>
-      <button role="tab" aria-selected={mode === 'flow'} className={mode === 'flow' ? 'active' : ''} onClick={() => setMode('flow')}><FileArchive size={16} /> Import Flow project</button>
+      {tab('single', 'Single file', <ImageIcon size={16} />)}
+      {tab('batch', 'Batch images', <Images size={16} />)}
+      {tab('flow', 'Import Flow project', <FileArchive size={16} />)}
     </div>
-    {mode === 'single' ? <MediaWorkspace /> : <FlowProjectWorkspace />}
+    {mode === 'single' && <MediaWorkspace />}
+    {mode === 'batch' && <FlowProjectWorkspace key="batch" variant="images" />}
+    {mode === 'flow' && <FlowProjectWorkspace key="flow" />}
   </div>;
 }
