@@ -18,6 +18,8 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     '/api/clean': [
       './public/vendor/models/migan-pipeline-v2.onnx',
+      // ONNX Runtime loads its WebAssembly glue and binary at runtime, so tracing misses them.
+      './node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs',
       './node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
     ],
   },
