@@ -17,7 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import { decodeHeicToPng, formatBytes, isAbortError, isHeic, needsVideoOverride, ProcessorError, validateMediaFile } from '@/lib/media';
-import { removeMetadataOnly, scanFile } from '@/lib/metadata/clean';
+import { hasNothingToRemove, isMetadataFallback, removeMetadataOnly, removeWatermarkAndMetadata, scanFile } from '@/lib/metadata/clean';
 import type { MetadataReport } from '@/lib/metadata/scan';
 import { processImage } from '@/lib/processors/image';
 import { processImageOnServer, SERVER_MAX_UPLOAD_BYTES, SERVER_MODE } from '@/lib/server-client';
@@ -143,11 +143,16 @@ export function MediaWorkspace() {
         : kind === 'image'
           ? processImage
           : (await import('@/lib/processors/video')).processVideo;
-      const processed = await processor(file, {
+      const processorOptions = {
         signal: controller.signal,
-        onProgress: ({ phase, progress, message }) => setJob({ phase, progress, message }),
-      });
-      if (!processed.detection.applied) {
+        onProgress: ({ phase, progress, message }: { phase: ProcessingJob['phase']; progress: number; message: string }) => setJob({ phase, progress, message }),
+      };
+      // Images get the one-button clean: watermark and metadata together.
+      const processed = kind === 'image'
+        ? await removeWatermarkAndMetadata(file, processorOptions, processor, metaBefore)
+        : await processor(file, processorOptions);
+      const metadataOnly = isMetadataFallback(processed);
+      if (!processed.detection.applied && !metadataOnly) {
         const unsafeRemoval = processed.detection.repairMode === 'unchanged-unsafe';
         setJob({
           phase: 'failed',
@@ -159,19 +164,18 @@ export function MediaWorkspace() {
         });
         return;
       }
-      // The cleaned image is re-encoded, which drops metadata; re-scan the download to confirm it.
-      const metadata = kind === 'image'
-        ? { before: metaBefore, after: await scanFile(processed.blob), lossless: false }
-        : undefined;
       const url = createObjectUrl(processed.blob);
-      setResult({ ...processed, operation: 'watermark', metadata, url });
+      setResult({ ...processed, operation: processed.operation ?? 'watermark', url });
       setComparison('after');
+      const contentAware = processed.detection.repairMode?.startsWith('content-aware') || processed.detection.repairMode === 'bounded-texture';
       setJob({
         phase: 'complete',
         progress: 1,
-        message: processed.detection.repairMode?.startsWith('content-aware') || processed.detection.repairMode === 'bounded-texture'
-          ? 'Your cleaned file is ready. A safe local content-aware repair was used.'
-          : 'Your cleaned file is ready.',
+        message: metadataOnly
+          ? `${processed.detection.repairMode === 'unchanged-unsafe'
+            ? processed.detection.qualityWarning ?? 'The mark was left alone because removing it could damage this area.'
+            : 'No Gemini, Veo or Flow mark was found, so the picture is unchanged.'} Its hidden metadata was removed.`
+          : `${kind === 'image' ? (hasNothingToRemove(metaBefore) ? 'Watermark removed; the file had no hidden metadata.' : 'Watermark and metadata removed.') : 'Your cleaned video is ready.'}${contentAware ? ' A safe local content-aware repair was used.' : ''}`,
       });
     } catch (error) {
       if (isAbortError(error)) {
@@ -268,8 +272,8 @@ export function MediaWorkspace() {
             {job.phase === 'complete' && (
               <div className="done"><Check size={16} />
                 {result?.operation === 'metadata'
-                  ? 'Metadata removed locally'
-                  : `Visible mark repaired ${cleanedOnServer ? 'on the server' : 'locally'}${result?.detection.repairMode?.startsWith('content-aware') || result?.detection.repairMode === 'bounded-texture' ? ', with content-aware fill' : ''}`}
+                  ? isMetadataFallback(result) ? 'No mark found, metadata removed locally' : 'Metadata removed locally'
+                  : `${kind === 'image' && !hasNothingToRemove(metaBefore) ? 'Watermark and metadata removed' : 'Visible mark repaired'} ${cleanedOnServer ? 'on the server' : 'locally'}${result?.detection.repairMode?.startsWith('content-aware') || result?.detection.repairMode === 'bounded-texture' ? ', with content-aware fill' : ''}`}
               </div>
             )}
             <button className="remove-file" aria-label="Remove selected file" onClick={reset}><X size={17} /></button>
@@ -284,7 +288,7 @@ export function MediaWorkspace() {
                 <button role="radio" aria-checked={useServer} className={useServer ? 'active' : ''} disabled={!serverAvailable} title={serverAvailable ? 'Uploads this image; it is cleaned in memory and not stored.' : `Server processing accepts images up to ${Math.round(SERVER_MAX_UPLOAD_BYTES / 1024 / 1024)} MB.`} onClick={() => setTarget('server')}>Upload to server</button>
               </div>
             )}
-            {job.phase === 'ready' && <button className="process-btn" onClick={() => void startProcessing()}>{kind === 'video' ? <Video size={17} /> : <Sparkles size={17} />} Remove visible mark</button>}
+            {job.phase === 'ready' && <button className="process-btn" onClick={() => void startProcessing()}>{kind === 'video' ? <><Video size={17} /> Remove visible mark</> : <><Sparkles size={17} /> Remove watermark &amp; metadata</>}</button>}
             {job.phase === 'complete' && <button className="process-btn" onClick={download}><Download size={17} /> Download {kind}</button>}
             {(job.phase === 'failed' || job.phase === 'cancelled') && <button className="process-btn secondary" onClick={() => void startProcessing(true)}><RefreshCw size={16} /> Try again</button>}
           </div>
@@ -305,7 +309,7 @@ export function MediaWorkspace() {
           )}
           {(job.phase === 'failed' || job.phase === 'cancelled') && (
             <div className="inline-error" role="alert"><AlertTriangle size={16} /><span>{job.message}</span>
-              {kind === 'image' && (job.errorCode === 'no-watermark' || job.errorCode === 'unsafe-removal') && (
+              {kind === 'image' && (job.errorCode === 'no-watermark' || job.errorCode === 'unsafe-removal') && !hasNothingToRemove(metaBefore) && (
                 <button onClick={() => void startMetadataClean()}><ShieldCheck size={14} /> Remove metadata only</button>
               )}
               <button onClick={reset}><RotateCcw size={14} /> Start over</button>

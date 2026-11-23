@@ -56,6 +56,14 @@ export function describeBatchResult(
   result: ProcessorResult,
   before: MetadataReport | null | undefined,
 ): { state: Extract<FlowBatchState, 'complete' | 'clean'>; message: string } {
+  if (result.operation === 'metadata' && result.detection.decisionTier !== 'metadata-only') {
+    // One-button clean on an image without a removable mark: the picture is kept, its metadata is not.
+    const kept = result.detection.repairMode === 'unchanged-unsafe'
+      ? result.detection.qualityWarning ?? 'Unsafe removal avoided; picture kept'
+      : 'No supported mark found; picture kept';
+    const leftover = result.metadata?.after.found ?? [];
+    return { state: 'clean', message: leftover.length ? `${kept}, still has ${shortLabels(leftover)}` : `${kept}, metadata removed` };
+  }
   if (result.operation === 'metadata') {
     const source = result.metadata?.before ?? before;
     if (source && source.container !== 'unknown' && source.found.length === 0) {

@@ -27,7 +27,7 @@ const geistMono = Geist_Mono({ subsets: ['latin'], weight: ['400', '500'], varia
 
 export const metadata: Metadata = {
   title: 'GemClean: Gemini Watermark Remover',
-  description: 'Remove visible Gemini, Veo, and Google Flow corner marks locally in your browser.',
+  description: 'Remove visible Gemini, Veo, and Google Flow corner marks and hidden metadata locally in your browser.',
   robots: { index: true, follow: true },
 };
 

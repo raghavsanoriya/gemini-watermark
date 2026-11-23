@@ -18,7 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import { decodeHeicToPng, formatBytes, isHeic } from '@/lib/media';
-import { removeMetadataFromImage, scanFile } from '@/lib/metadata/clean';
+import { removeMetadataFromImage, removeWatermarkAndMetadata, scanFile } from '@/lib/metadata/clean';
 import { METADATA_LABELS, type MetadataReport } from '@/lib/metadata/scan';
 import { processImage } from '@/lib/processors/image';
 import type { FlowArchiveManifest, FlowAsset, FlowAssetBatchItem } from '@/types/flow';
@@ -255,12 +255,10 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
 
   const scanOf = async (file: File, asset: FlowAsset) => (asset.id in metaRef.current ? metaRef.current[asset.id] : await scanFile(file).catch(() => null));
 
-  // The cleaned image is re-encoded, which drops metadata; re-scan it so the card can confirm that.
-  const removeMark = async (file: File, options: ProcessorOptions, asset: FlowAsset): Promise<ProcessorResult> => {
-    const result = await processImage(file, options);
-    if (!result.detection.applied) return result;
-    return { ...result, operation: 'watermark', metadata: { before: await scanOf(file, asset), after: await scanFile(result.blob), lossless: false } };
-  };
+  // The one-button clean: watermark and metadata together; images without a mark still lose their metadata.
+  const removeMark = async (file: File, options: ProcessorOptions, asset: FlowAsset): Promise<ProcessorResult> => (
+    removeWatermarkAndMetadata(file, options, processImage, await scanOf(file, asset))
+  );
 
   const removeMetadata = async (file: File, _options: ProcessorOptions, asset: FlowAsset): Promise<ProcessorResult> => {
     const before = await scanOf(file, asset);
@@ -284,7 +282,7 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
     setError('');
     setOverallProgress(0);
     const count = `${assets.length} selected image${assets.length === 1 ? '' : 's'}`;
-    setMessage(operation === 'metadata' ? `Removing metadata from ${count}…` : `Cleaning ${count} sequentially…`);
+    setMessage(operation === 'metadata' ? `Removing metadata from ${count}…` : `Removing watermarks and metadata from ${count}…`);
     const { describeBatchResult, runSequentialImageBatch } = await import('@/lib/flow/batch');
     await runSequentialImageBatch(assets, controller.signal, operation === 'metadata' ? removeMetadata : removeMark, {
       onStart: (asset, index, total) => {
@@ -369,7 +367,7 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
       >
         <div className="flow-import-icon"><ImageIcon size={34} /></div>
         <h2>Clean many images at once</h2>
-        <p>Drop or choose several Gemini images. They are cleaned one by one on this device and can be downloaded as one ZIP. Hidden metadata such as GPS, EXIF and AI prompts is listed too, and you can remove just that.</p>
+        <p>Drop or choose several Gemini images. One button removes the visible mark and hidden metadata (GPS, EXIF, C2PA, AI prompts) from each, on this device, and you can download them as one ZIP.</p>
         <input ref={imagesInputRef} type="file" accept={BATCH_IMAGE_ACCEPT} multiple hidden onChange={(event) => void importImages(Array.from(event.target.files ?? []))} />
         <div className="flow-import-actions">
           <button onClick={() => imagesInputRef.current?.click()} disabled={importing}><ImageIcon size={18} /> Choose images</button>
@@ -441,8 +439,8 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
         {busy ? <button className="flow-cancel" onClick={() => abortRef.current?.abort()}><Square size={13} /> Cancel</button> : <>
           {retryCount > 0 && <button className="flow-secondary" onClick={retryUnfinished}><RefreshCw size={14} /> Retry {retryCount}</button>}
           {completeCount > 0 && <button className="flow-secondary" onClick={() => void downloadZip()}><Download size={15} /> Results ZIP ({completeCount})</button>}
-          <button className="flow-secondary" disabled={selected.size === 0} onClick={() => startSelected('metadata')} title="Strips EXIF, GPS, C2PA, AI prompts and other hidden data without touching the pixels."><ShieldCheck size={14} /> Remove metadata only</button>
-          <button className="process-btn" disabled={selected.size === 0} onClick={() => startSelected('watermark')}>Clean {selected.size} selected</button>
+          <button className="flow-secondary" disabled={selected.size === 0} onClick={() => startSelected('metadata')} title="Strips EXIF, GPS, C2PA, AI prompts and other hidden data without touching the pixels."><ShieldCheck size={14} /> Metadata only</button>
+          <button className="process-btn" disabled={selected.size === 0} onClick={() => startSelected('watermark')} title="Removes the visible mark and all hidden metadata from each selected image.">Remove watermark &amp; metadata ({selected.size})</button>
         </>}
       </div>
       {error && <div className="inline-error" role="alert"><AlertTriangle size={16} />{error}</div>}

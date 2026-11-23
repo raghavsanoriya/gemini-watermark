@@ -104,12 +104,21 @@ describe('batch result wording', () => {
   it('describes metadata-only outcomes', () => {
     const stripped = (before: MetadataReport, after: MetadataReport): ProcessorResult => ({
       ...result(false), operation: 'metadata', metadata: { before, after, lossless: true },
+      detection: { applied: false, decisionTier: 'metadata-only', skipReason: null, size: null, position: null },
     });
     expect(describeBatchResult(stripped(report(['gps', 'exif']), report([])), undefined))
       .toEqual({ state: 'complete', message: 'Metadata removed, pixels unchanged' });
     expect(describeBatchResult(stripped(report([]), report([])), undefined).state).toBe('clean');
     expect(describeBatchResult(stripped(report([], 'unknown'), report([])), undefined).message).toBe('Converted to PNG, metadata removed');
     expect(describeBatchResult(stripped(report(['xmp']), report(['xmp'])), undefined).message).toContain('still has XMP');
+  });
+
+  it('describes an image without a mark whose metadata was still removed', () => {
+    const fallback: ProcessorResult = {
+      ...result(false), operation: 'metadata', metadata: { before: report(['gps']), after: report([]), lossless: true },
+    };
+    expect(describeBatchResult(fallback, report(['gps'])))
+      .toEqual({ state: 'clean', message: 'No supported mark found; picture kept, metadata removed' });
   });
 
   it('notes metadata on watermark results and kept originals', () => {

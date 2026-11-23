@@ -1,5 +1,5 @@
 import { decodeHeicToPng, isHeic, outputFileName, ProcessorError } from '@/lib/media';
-import type { ProcessorResult } from '@/types/media';
+import type { ProcessorOptions, ProcessorResult } from '@/types/media';
 import { scanMetadata, type MetadataReport } from './scan';
 import { stripMetadata, UnsupportedContainerError } from './strip';
 
@@ -53,4 +53,51 @@ export async function removeMetadataFromImage(file: File, before: MetadataReport
   if (!isHeic(file)) return removeMetadataOnly(file, before);
   const result = await removeMetadataOnly(await decodeHeicToPng(file), before);
   return { ...result, metadata: result.metadata && { ...result.metadata, lossless: false } };
+}
+
+/** True when the scan shows nothing worth removing (a HEIC original always counts as something). */
+export function hasNothingToRemove(report: MetadataReport | null): boolean {
+  return !!report && report.container !== 'unknown' && report.found.length === 0;
+}
+
+/**
+ * The one-button clean: removes the visible watermark and the file's metadata together.
+ *
+ * - Mark removed: the repaired image is re-encoded, which already drops metadata. The download
+ *   is re-scanned to prove it, and stripped losslessly if anything survived.
+ * - No mark (or removal judged unsafe): the picture stays exactly as it was, but its metadata is
+ *   still removed, so the user gets a cleaned file instead of an error. The result keeps the
+ *   watermark step's detection so callers can say why the picture was not changed.
+ * - Neither a mark nor metadata: the watermark step's result is returned unchanged.
+ */
+export async function removeWatermarkAndMetadata(
+  file: File,
+  options: ProcessorOptions,
+  removeMark: (file: File, options: ProcessorOptions) => Promise<ProcessorResult>,
+  before: MetadataReport | null,
+): Promise<ProcessorResult> {
+  const processed = await removeMark(file, options);
+  if (processed.detection.applied) {
+    let blob = processed.blob;
+    let after = await scanFile(blob);
+    if (after.found.length) {
+      const stripped = stripMetadata(new Uint8Array(await blob.arrayBuffer()));
+      blob = new Blob([stripped.bytes as Uint8Array<ArrayBuffer>], { type: stripped.mimeType });
+      after = scanMetadata(stripped.bytes);
+    }
+    return { ...processed, blob, operation: 'watermark', metadata: { before, after, lossless: false } };
+  }
+  if (hasNothingToRemove(before)) return processed;
+  try {
+    const stripped = await removeMetadataFromImage(file, before);
+    return { ...stripped, detection: processed.detection };
+  } catch {
+    // An image the stripper cannot handle keeps the watermark step's answer.
+    return processed;
+  }
+}
+
+/** True for a result where the mark was not removed but the metadata was. */
+export function isMetadataFallback(result: ProcessorResult): boolean {
+  return result.operation === 'metadata' && result.detection.decisionTier !== 'metadata-only';
 }

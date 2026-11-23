@@ -61,7 +61,7 @@ export default function Home() {
         <div className="container hero-grid">
           <div className="hero-copy">
             <h1>Remove the mark. Keep the picture.</h1>
-            <p className="lead">Clean the visible Gemini, Veo and Flow corner mark in your browser.</p>
+            <p className="lead">Clean the visible Gemini, Veo and Flow corner mark and the hidden metadata, with one button, in your browser.</p>
             <ul className="facts">
               <li><LockKeyhole size={16} aria-hidden="true" /> No sign-up</li>
               <li><ShieldCheck size={16} aria-hidden="true" /> {SERVER_MODE ? 'Free mode never uploads' : 'Files never upload'}</li>
@@ -130,7 +130,8 @@ export default function Home() {
               <tr><th scope="row">Video</th><td>MP4, MOV, WebM, MKV, MPG and MPEG, when your browser can decode them</td><td>MP4 with H.264</td></tr>
               <tr><th scope="row">Long video</th><td>Over 120 seconds or 500 MB asks before it starts</td><td>Depends on browser codec support and device memory</td></tr>
               {SERVER_MODE && <tr><th scope="row">Server mode</th><td>One image up to 4 MB, 20 every 10 minutes</td><td>A PNG in the same response, nothing stored</td></tr>}
-              <tr><th scope="row">Left alone</th><td>Invisible SynthID and provenance metadata</td><td>Untouched: only the visible corner mark is repaired</td></tr>
+              <tr><th scope="row">Metadata</th><td>EXIF, GPS, XMP, IPTC, C2PA Content Credentials and AI prompts</td><td>Removed together with the mark, and the download is re-checked</td></tr>
+              <tr><th scope="row">Left alone</th><td>Invisible SynthID, which is woven into the pixels</td><td>Untouched: it is not file metadata and cannot be stripped</td></tr>
             </tbody>
           </table>
         </div>
@@ -155,7 +156,8 @@ export default function Home() {
             <details open><summary>Does my file leave this device?</summary><p>{SERVER_MODE ? 'Not in the default free mode: decoding, detection, restoration, and export all happen locally in your browser. Only if you choose "Upload to server" is that one image sent to the GemClean server, where it is cleaned in memory and returned. Nothing is stored and no account is needed.' : 'No. Decoding, detection, restoration, and export all happen locally in your browser. There is no upload API.'}</p></details>
             <details><summary>Which formats can I use?</summary><p>Images: PNG, JPG, WebP, and HEIC. Videos: MP4, MOV, WebM, MKV, MPG, and MPEG when your browser can decode them. Video exports as MP4/H.264.</p></details>
             <details><summary>Why was no mark detected?</summary><p>GemClean intentionally stops when it cannot confidently match a known Gemini, Veo, or Flow mark. This protects unrelated corner details from being changed.</p></details>
-            <details><summary>Does this remove SynthID?</summary><p>No. It repairs only the visible corner mark and does not remove invisible SynthID or provenance metadata.</p></details>
+            <details><summary>Does this remove SynthID?</summary><p>No. SynthID is hidden in the pixels themselves, not in the file&rsquo;s metadata. GemClean repairs the visible corner mark and removes file metadata such as C2PA Content Credentials, the IPTC &ldquo;made with AI&rdquo; label, EXIF, GPS, XMP and AI prompts.</p></details>
+            <details><summary>What if my image has no mark?</summary><p>The picture is left exactly as it was, but its hidden metadata is still removed, so you always get a cleaned file when there was something to clean.</p></details>
           </div>
         </div>
       </section>
