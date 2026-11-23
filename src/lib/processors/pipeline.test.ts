@@ -24,6 +24,17 @@ describe('image pipeline safeguards', () => {
     expect(Buffer.from(result.imageData.data).equals(Buffer.from(image.data))).toBe(true);
   }, 60_000);
 
+  // UI screenshots where the catalog used to "find" a mark and wiped text or smeared a button.
+  for (const theme of ['rim', 'wayfind']) {
+    const path = join(process.cwd(), '.claude', 'skills', 'hallmark', 'references', 'themes', `${theme}.jpg`);
+    it.skipIf(!existsSync(path))(`leaves the ${theme} screenshot (no mark) untouched`, async () => {
+      const image = await load(path);
+      const result = await cleanImageData(image, noMigan);
+      expect(result.meta.applied).toBe(false);
+      expect(Buffer.from(result.imageData.data).equals(Buffer.from(image.data))).toBe(true);
+    }, 60_000);
+  }
+
   it('spots the outline a resized near-opaque mark leaves after the exact reverse solve', async () => {
     const result = await cleanImageData(await load(demo('timber-before.jpg'), 688), noMigan);
     expect(result.meta.applied).toBe(true);

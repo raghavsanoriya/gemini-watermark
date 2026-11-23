@@ -12,6 +12,7 @@ import {
   hasMarkEvidence,
   isGeminiPlacement,
   locateMarkByTemplate,
+  markScore,
   outlineResidual,
   OUTLINE_RESIDUAL_SCORE,
   removeMarkAt,
@@ -65,10 +66,16 @@ export async function cleanImageData(
   // The catalog can also "validate" a standard-size mark in the wrong place when the image was
   // resized afterwards, leaving the real, smaller sparkle untouched. Cross-check with a free search.
   const crossCheck = primaryApplied ? await locateMarkByTemplate(original) : null;
-  // Overriding an applied removal needs more than a match: it must sit where Gemini places the mark.
-  const misplaced = crossCheck && primary.meta.position
-    && overlap(primary.meta.position, crossCheck.position) < 0.5
+  // When the two disagree on where the mark is or how big it is, keep the one that explains the
+  // pixels better; overriding also needs the match to sit where Gemini places the mark.
+  const primaryBox = primary.meta.position;
+  const disagree = !!crossCheck && !!primaryBox && (
+    overlap(primaryBox, crossCheck.position) < 0.5
+    || Math.max(primaryBox.width, crossCheck.position.width) / Math.min(primaryBox.width, crossCheck.position.width) > 1.15
+  );
+  const misplaced = disagree && crossCheck && primaryBox
     && isGeminiPlacement(original.width, original.height, crossCheck.position)
+    && crossCheck.score > (await markScore(original, primaryBox)) + 0.05
     ? await removeMarkAt(original, crossCheck)
     : null;
   if (misplaced) {

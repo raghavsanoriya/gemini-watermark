@@ -89,15 +89,27 @@ describe('corner template search', () => {
     expect(maxError).toBeLessThan(16);
   }, 60_000);
 
+  // A phone screenshot: the picture was scaled down and its bottom cut off, so the margins differ.
+  it('finds a small mark in a screenshot that cropped the bottom margin', async () => {
+    const { image } = await scene({ size: 22, marginRight: 41, marginBottom: 25, gain: 0.65 }, 720, 1300);
+    const result = await cleanImageData(image);
+    expect(result.meta.applied).toBe(true);
+    expect(Math.abs(result.meta.position!.x - (720 - 41 - 22))).toBeLessThanOrEqual(2);
+    expect(Math.abs(result.meta.position!.y - (1300 - 25 - 22))).toBeLessThanOrEqual(2);
+  }, 60_000);
+
   it('ignores a small sparkle shape away from where Gemini places the mark', async () => {
     const { image } = await scene({ size: 20, marginRight: 150, marginBottom: 60, gain: 0.65 }, 768, 1376);
     expect(await locateMarkByTemplate(image)).toBeNull();
   }, 60_000);
 
-  it('recognises Gemini placement by equal, proportionate margins', () => {
+  it('recognises Gemini placement by proportionate margins', () => {
     expect(isGeminiPlacement(1536, 2752, { x: 1399, y: 2615, width: 48, height: 48 })).toBe(true);
     expect(isGeminiPlacement(768, 1376, { x: 699, y: 1307, width: 25, height: 25 })).toBe(true);
-    expect(isGeminiPlacement(1000, 1000, { x: 900, y: 940, width: 20, height: 20 })).toBe(false);
+    // A screenshot that cut the bottom keeps the right margin.
+    expect(isGeminiPlacement(720, 1300, { x: 656, y: 1251, width: 22, height: 22 })).toBe(true);
     expect(isGeminiPlacement(1000, 1000, { x: 700, y: 700, width: 20, height: 20 })).toBe(false);
+    expect(isGeminiPlacement(1000, 1000, { x: 975, y: 900, width: 20, height: 20 })).toBe(false);
+    expect(isGeminiPlacement(1000, 1000, { x: 900, y: 970, width: 20, height: 20 })).toBe(false);
   });
 });

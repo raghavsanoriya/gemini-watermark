@@ -27,18 +27,22 @@ const MIN_SIZE = 16;
 const HALF_RES_MIN_SIZE = 40;
 /**
  * Small sparkle-like shapes are common (UI glyphs, texture), so marks below this size are only
- * accepted where Gemini puts them: equal right and bottom margins of at most 2.5x the mark size.
- * Gemini uses 0.67x and ~1.85x, and resizing the image keeps those ratios.
+ * accepted where Gemini puts them. Gemini's right and bottom margins are 0.67x or ~1.85x the mark
+ * size, and resizing keeps those ratios. Phone screenshots keep the right edge but may crop or pad
+ * the bottom, so only the right margin has a lower bound.
  */
 const PLACEMENT_CHECK_BELOW = 32;
-const MAX_MARGIN_RATIO = 2.5;
+const MIN_RIGHT_MARGIN_RATIO = 0.5;
+const MAX_MARGIN_RATIO = 2.4;
 
 /** True when a mark at `position` sits where Gemini places its sparkle. */
 export function isGeminiPlacement(width: number, height: number, position: Position): boolean {
   const right = width - position.x - position.width;
   const bottom = height - position.y - position.height;
-  return Math.abs(right - bottom) <= Math.max(3, position.width * 0.12)
-    && Math.max(right, bottom) <= position.width * MAX_MARGIN_RATIO;
+  return right >= position.width * MIN_RIGHT_MARGIN_RATIO
+    && right <= position.width * MAX_MARGIN_RATIO
+    && bottom >= 0
+    && bottom <= position.width * MAX_MARGIN_RATIO;
 }
 const MAX_SIZE = 112;
 
@@ -225,15 +229,23 @@ export function edgeScore(image: PixelImageData, alpha: Float32Array, position: 
 }
 
 /**
- * Whether the original shows the sparkle at `position` at all. Real marks, even faint
- * JPEG-softened ones, score 0.3+ on outline or 0.5+ on shape; phantom catalog matches on
- * clean pictures score under 0.05 and 0.3.
+ * Whether the original shows the sparkle at `position` at all. A real mark, even a faint
+ * JPEG-softened one, matches both its outline (0.3+) and its filled shape (0.5+). Phantom
+ * catalog matches on clean pictures or UI screenshots match one at most, by chance
+ * (seen: outline 0.12 with shape 0.02, outline 0.1 with shape 0.45).
  */
 export async function hasMarkEvidence(image: PixelImageData, position: Position): Promise<boolean> {
   if (position.width !== position.height || position.x < 0 || position.y < 0
     || position.x + position.width > image.width || position.y + position.height > image.height) return true;
   const alpha = await (await getEngine()).getAlphaMap(position.width);
-  return edgeScore(image, alpha, position) >= 0.12 || shapeScore(image, alpha, position) >= 0.35;
+  return edgeScore(image, alpha, position) >= 0.2 && Math.abs(shapeScore(image, alpha, position)) >= 0.3;
+}
+
+/** Shape correlation of the original with the calibrated sparkle at `position` (how well it explains the pixels). */
+export async function markScore(image: PixelImageData, position: Position): Promise<number> {
+  if (position.width !== position.height || position.x < 0 || position.y < 0
+    || position.x + position.width > image.width || position.y + position.height > image.height) return 0;
+  return shapeScore(image, await (await getEngine()).getAlphaMap(position.width), position);
 }
 
 /** An outline score at or above this after removal means a visible ring is left (clean removals: ~0.05-0.22). */
