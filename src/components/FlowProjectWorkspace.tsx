@@ -18,10 +18,31 @@ import {
   X,
 } from 'lucide-react';
 import { decodeHeicToPng, formatBytes, isHeic } from '@/lib/media';
+import { removeMetadataFromImage, scanFile } from '@/lib/metadata/clean';
+import { METADATA_LABELS, type MetadataReport } from '@/lib/metadata/scan';
 import { processImage } from '@/lib/processors/image';
 import type { FlowArchiveManifest, FlowAsset, FlowAssetBatchItem } from '@/types/flow';
+import type { ProcessorOptions, ProcessorResult } from '@/types/media';
+import { MetadataPanel } from './MetadataPanel';
 
 type BatchMap = Record<string, FlowAssetBatchItem>;
+/** Scan of each image as imported; null when the scan failed. Missing while still scanning. */
+type MetaMap = Record<string, MetadataReport | null>;
+type BatchOperation = 'watermark' | 'metadata';
+
+function MetaLine({ before, result }: { before: MetadataReport | null | undefined; result?: ProcessorResult }) {
+  const after = result?.metadata?.after;
+  // A kept original has no re-scan, so its import scan still describes it.
+  if (after) {
+    return after.found.length
+      ? <span className="flow-meta warn">Still has {after.found.map((kind) => METADATA_LABELS[kind]).join(', ')}</span>
+      : <span className="flow-meta ok"><ShieldCheck size={11} /> No metadata in result</span>;
+  }
+  if (!before) return null;
+  if (before.container === 'unknown') return <span className="flow-meta">HEIC: metadata is dropped when converted</span>;
+  if (!before.found.length) return <span className="flow-meta">No hidden metadata</span>;
+  return <span className="flow-meta has" title={before.found.map((kind) => METADATA_LABELS[kind]).join(', ')}>Hidden: {before.found.map((kind) => METADATA_LABELS[kind]).join(', ')}</span>;
+}
 
 const DRIVE_CONFIGURED = Boolean(
   process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
@@ -85,6 +106,31 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
   const [error, setError] = useState('');
   const [previewAsset, setPreviewAsset] = useState<FlowAsset | null>(null);
   const [previewSide, setPreviewSide] = useState<'before' | 'after'>('after');
+  const [meta, setMeta] = useState<MetaMap>({});
+  const metaRef = useRef<MetaMap>({});
+  const lastOperationRef = useRef<BatchOperation>('watermark');
+
+  // Scan the imported images one at a time in the background; it only parses bytes, no decoding.
+  useEffect(() => {
+    if (!manifest) return;
+    let active = true;
+    void (async () => {
+      for (const asset of manifest.assets) {
+        if (!active) return;
+        if (asset.kind !== 'image' || !asset.supported) continue;
+        const report = await asset.loadFile().then(scanFile).catch(() => null);
+        if (!active) return;
+        metaRef.current = { ...metaRef.current, [asset.id]: report };
+        setMeta(metaRef.current);
+      }
+    })();
+    return () => { active = false; };
+  }, [manifest]);
+
+  const clearMeta = () => {
+    metaRef.current = {};
+    setMeta({});
+  };
 
   useEffect(() => () => {
     abortRef.current?.abort();
@@ -95,6 +141,7 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
     abortRef.current?.abort();
     await manifestRef.current?.dispose();
     manifestRef.current = next;
+    clearMeta();
     setManifest(next);
     setSelected(new Set(next.assets.filter((asset) => asset.supported).map((asset) => asset.id)));
     setBatch(Object.fromEntries(next.assets.filter((asset) => asset.supported).map((asset) => [asset.id, {
@@ -110,6 +157,7 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
     abortRef.current?.abort();
     await manifestRef.current?.dispose();
     manifestRef.current = null;
+    clearMeta();
     setManifest(null);
     setSelected(new Set());
     setBatch({});
@@ -205,16 +253,40 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
     setBatch((current) => ({ ...current, [id]: { ...current[id], ...update } }));
   };
 
-  const processAssets = async (assets: FlowAsset[]) => {
+  const scanOf = async (file: File, asset: FlowAsset) => (asset.id in metaRef.current ? metaRef.current[asset.id] : await scanFile(file).catch(() => null));
+
+  // The cleaned image is re-encoded, which drops metadata; re-scan it so the card can confirm that.
+  const removeMark = async (file: File, options: ProcessorOptions, asset: FlowAsset): Promise<ProcessorResult> => {
+    const result = await processImage(file, options);
+    if (!result.detection.applied) return result;
+    return { ...result, operation: 'watermark', metadata: { before: await scanOf(file, asset), after: await scanFile(result.blob), lossless: false } };
+  };
+
+  const removeMetadata = async (file: File, _options: ProcessorOptions, asset: FlowAsset): Promise<ProcessorResult> => {
+    const before = await scanOf(file, asset);
+    if (before && before.container !== 'unknown' && before.found.length === 0) {
+      // Nothing to strip: keep the original byte for byte.
+      return {
+        blob: file, mimeType: file.type, fileName: file.name, operation: 'metadata',
+        detection: { applied: false, decisionTier: 'metadata-only', skipReason: null, size: null, position: null },
+        metadata: { before, after: before, lossless: true },
+      };
+    }
+    return removeMetadataFromImage(file, before);
+  };
+
+  const processAssets = async (assets: FlowAsset[], operation: BatchOperation) => {
     if (!assets.length) return;
+    lastOperationRef.current = operation;
     const controller = new AbortController();
     abortRef.current = controller;
     setBusy(true);
     setError('');
     setOverallProgress(0);
-    setMessage(`Cleaning ${assets.length} selected image${assets.length === 1 ? '' : 's'} sequentially…`);
-    const { runSequentialImageBatch } = await import('@/lib/flow/batch');
-    await runSequentialImageBatch(assets, controller.signal, processImage, {
+    const count = `${assets.length} selected image${assets.length === 1 ? '' : 's'}`;
+    setMessage(operation === 'metadata' ? `Removing metadata from ${count}…` : `Cleaning ${count} sequentially…`);
+    const { describeBatchResult, runSequentialImageBatch } = await import('@/lib/flow/batch');
+    await runSequentialImageBatch(assets, controller.signal, operation === 'metadata' ? removeMetadata : removeMark, {
       onStart: (asset, index, total) => {
         updateBatch(asset.id, { state: 'processing', progress: 0, message: `Image ${index + 1} of ${total}` });
       },
@@ -223,19 +295,7 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
         setOverallProgress((index + progress) / total);
       },
       onComplete: (asset, result, index, total) => {
-        const usedTextureRepair = result.detection.repairMode === 'bounded-texture' ||
-          result.detection.repairMode?.startsWith('content-aware');
-        const unsafeRemoval = result.detection.repairMode === 'unchanged-unsafe';
-        updateBatch(asset.id, {
-          state: result.detection.applied ? 'complete' : 'clean',
-          progress: 1,
-          message: result.detection.applied
-            ? usedTextureRepair ? 'Visible mark repaired with content-aware fill' : 'Visible mark repaired'
-            : unsafeRemoval
-              ? result.detection.qualityWarning ?? 'Unsafe removal avoided; original kept'
-              : 'No supported mark found; original kept',
-          result,
-        });
+        updateBatch(asset.id, { ...describeBatchResult(result, metaRef.current[asset.id]), progress: 1, result });
         setOverallProgress((index + 1) / total);
       },
       onError: (asset, cause, index, total) => {
@@ -249,17 +309,17 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
     setMessage(controller.signal.aborted ? 'Batch cancelled. Finished results are still available.' : 'Batch finished. Review or download the results.');
   };
 
-  const startSelected = () => {
+  const startSelected = (operation: BatchOperation) => {
     if (!manifest) return;
     const assets = manifest.assets.filter((asset) => asset.supported && selected.has(asset.id));
     assets.forEach((asset) => updateBatch(asset.id, { state: 'queued', progress: 0, message: 'Queued', result: undefined }));
-    void processAssets(assets);
+    void processAssets(assets, operation);
   };
 
   const retryUnfinished = () => {
     if (!manifest) return;
     const assets = manifest.assets.filter((asset) => ['failed', 'cancelled'].includes(batch[asset.id]?.state));
-    void processAssets(assets);
+    void processAssets(assets, lastOperationRef.current);
   };
 
   const downloadOne = async (asset: FlowAsset) => {
@@ -290,6 +350,14 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
   const completeCount = Object.values(batch).filter((item) => ['complete', 'clean'].includes(item.state)).length;
   const retryCount = Object.values(batch).filter((item) => ['failed', 'cancelled'].includes(item.state)).length;
   const previewResult = previewAsset ? batch[previewAsset.id]?.result : undefined;
+  const imageIds = manifest?.assets.filter((asset) => asset.kind === 'image' && asset.supported).map((asset) => asset.id) ?? [];
+  const scannedCount = imageIds.filter((id) => id in meta).length;
+  const withMetadata = imageIds.filter((id) => meta[id]?.found.length).length;
+  const metaSummary = scannedCount < imageIds.length
+    ? `Checking for hidden metadata… ${scannedCount}/${imageIds.length}`
+    : withMetadata
+      ? `${withMetadata} of ${imageIds.length} image${imageIds.length === 1 ? '' : 's'} carry hidden metadata`
+      : imageIds.length ? 'No hidden metadata found' : '';
 
   if (!manifest && variant === 'images') {
     return (
@@ -301,7 +369,7 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
       >
         <div className="flow-import-icon"><ImageIcon size={34} /></div>
         <h2>Clean many images at once</h2>
-        <p>Drop or choose several Gemini images. They are cleaned one by one on this device and can be downloaded as one ZIP.</p>
+        <p>Drop or choose several Gemini images. They are cleaned one by one on this device and can be downloaded as one ZIP. Hidden metadata such as GPS, EXIF and AI prompts is listed too, and you can remove just that.</p>
         <input ref={imagesInputRef} type="file" accept={BATCH_IMAGE_ACCEPT} multiple hidden onChange={(event) => void importImages(Array.from(event.target.files ?? []))} />
         <div className="flow-import-actions">
           <button onClick={() => imagesInputRef.current?.click()} disabled={importing}><ImageIcon size={18} /> Choose images</button>
@@ -343,6 +411,7 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
 
       <div className="flow-toolbar">
         {variant === 'flow' && <label>Project<select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}><option value="all">All projects</option>{manifest.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>}
+        {metaSummary && <span className="flow-meta-summary"><ShieldCheck size={13} /> {metaSummary}</span>}
         <button className="flow-select-all" onClick={toggleAllVisible}>{visibleSelected === visibleSupported.length && visibleSupported.length ? 'Clear visible' : 'Select visible'} <span>{visibleSelected}/{visibleSupported.length}</span></button>
       </div>
 
@@ -358,6 +427,7 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
               {item?.state === 'processing' && <span className="flow-card-progress" style={{ '--progress': `${Math.round(item.progress * 100)}%` } as React.CSSProperties}>{Math.round(item.progress * 100)}%</span>}
             </button>
             <div className="flow-card-copy"><label><input type="checkbox" checked={chosen} disabled={!asset.supported || busy} onChange={() => setSelected((current) => { const next = new Set(current); if (next.has(asset.id)) next.delete(asset.id); else next.add(asset.id); return next; })} /><span><b>{asset.name}</b><small>{asset.projectName}, {formatBytes(asset.size)}</small></span></label>
+              {asset.kind === 'image' && asset.supported && <MetaLine before={meta[asset.id]} result={item?.result} />}
               {!asset.supported && <span className="flow-status unsupported">Visible only, not processed</span>}
               {item && item.state !== 'queued' && <span className={`flow-status ${item.state}`}>{item.state === 'complete' ? <Check size={12} /> : item.state === 'failed' ? <AlertTriangle size={12} /> : null}{item.message}</span>}
               {['complete', 'clean'].includes(item?.state) && <button className="flow-download-one" onClick={() => void downloadOne(asset)}><Download size={13} /> Download</button>}
@@ -371,7 +441,8 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
         {busy ? <button className="flow-cancel" onClick={() => abortRef.current?.abort()}><Square size={13} /> Cancel</button> : <>
           {retryCount > 0 && <button className="flow-secondary" onClick={retryUnfinished}><RefreshCw size={14} /> Retry {retryCount}</button>}
           {completeCount > 0 && <button className="flow-secondary" onClick={() => void downloadZip()}><Download size={15} /> Results ZIP ({completeCount})</button>}
-          <button className="process-btn" disabled={selected.size === 0} onClick={startSelected}>Clean {selected.size} selected</button>
+          <button className="flow-secondary" disabled={selected.size === 0} onClick={() => startSelected('metadata')} title="Strips EXIF, GPS, C2PA, AI prompts and other hidden data without touching the pixels."><ShieldCheck size={14} /> Remove metadata only</button>
+          <button className="process-btn" disabled={selected.size === 0} onClick={() => startSelected('watermark')}>Clean {selected.size} selected</button>
         </>}
       </div>
       {error && <div className="inline-error" role="alert"><AlertTriangle size={16} />{error}</div>}
@@ -384,6 +455,7 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
             <div className="compare-toggle static"><button className={previewSide === 'before' ? 'active' : ''} onClick={() => setPreviewSide('before')}>Before</button><button className={previewSide === 'after' ? 'active' : ''} disabled={!previewResult} onClick={() => setPreviewSide('after')}>After</button></div>
             {previewResult && <button className="flow-secondary" onClick={() => void downloadOne(previewAsset)}><Download size={15} /> Download</button>}
           </div>
+          <div className="flow-preview-meta"><MetadataPanel before={meta[previewAsset.id] ?? null} outcome={previewResult?.metadata} /></div>
         </div>
       </div>}
     </div>

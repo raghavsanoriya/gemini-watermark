@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { FlowAsset } from '@/types/flow';
 import type { ProcessorResult } from '@/types/media';
-import { runSequentialImageBatch } from './batch';
+import type { MetadataReport } from '@/lib/metadata/scan';
+import { describeBatchResult, runSequentialImageBatch } from './batch';
 
 function asset(id: string): FlowAsset {
   const file = new File([id], `${id}.png`, { type: 'image/png' });
@@ -78,5 +79,44 @@ describe('sequential Flow processing', () => {
     });
     expect(failed).toEqual(['a']);
     expect(completed).toEqual(['b']);
+  });
+
+  it('keeps a metadata-only result and passes the asset to the processor', async () => {
+    const seen: string[] = [];
+    const completed: ProcessorResult[] = [];
+    await runSequentialImageBatch([asset('a')], new AbortController().signal, async (_file, _options, item) => {
+      seen.push(item.id);
+      return { ...result(false), operation: 'metadata' };
+    }, {
+      onStart: vi.fn(), onProgress: vi.fn(), onError: vi.fn(), onCancelled: vi.fn(),
+      onComplete: (_item, value) => completed.push(value),
+    });
+    expect(seen).toEqual(['a']);
+    expect(await completed[0].blob.text()).toBe('processed');
+  });
+});
+
+function report(found: MetadataReport['found'], container: MetadataReport['container'] = 'png'): MetadataReport {
+  return { container, found, details: {} };
+}
+
+describe('batch result wording', () => {
+  it('describes metadata-only outcomes', () => {
+    const stripped = (before: MetadataReport, after: MetadataReport): ProcessorResult => ({
+      ...result(false), operation: 'metadata', metadata: { before, after, lossless: true },
+    });
+    expect(describeBatchResult(stripped(report(['gps', 'exif']), report([])), undefined))
+      .toEqual({ state: 'complete', message: 'Metadata removed, pixels unchanged' });
+    expect(describeBatchResult(stripped(report([]), report([])), undefined).state).toBe('clean');
+    expect(describeBatchResult(stripped(report([], 'unknown'), report([])), undefined).message).toBe('Converted to PNG, metadata removed');
+    expect(describeBatchResult(stripped(report(['xmp']), report(['xmp'])), undefined).message).toContain('still has XMP');
+  });
+
+  it('notes metadata on watermark results and kept originals', () => {
+    const repaired: ProcessorResult = { ...result(true), metadata: { before: report(['c2pa']), after: report([]), lossless: false } };
+    expect(describeBatchResult(repaired, report(['c2pa'])).message).toBe('Visible mark repaired and metadata removed');
+    expect(describeBatchResult(result(false), report(['gps'])))
+      .toEqual({ state: 'clean', message: 'No supported mark found; original kept (it still has hidden metadata)' });
+    expect(describeBatchResult(result(false), report([])).message).toBe('No supported mark found; original kept');
   });
 });

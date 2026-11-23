@@ -1,4 +1,4 @@
-import { outputFileName, ProcessorError } from '@/lib/media';
+import { decodeHeicToPng, isHeic, outputFileName, ProcessorError } from '@/lib/media';
 import type { ProcessorResult } from '@/types/media';
 import { scanMetadata, type MetadataReport } from './scan';
 import { stripMetadata, UnsupportedContainerError } from './strip';
@@ -43,4 +43,14 @@ export async function removeMetadataOnly(file: File, before: MetadataReport | nu
     operation: 'metadata',
     metadata: { before, after: scanMetadata(stripped.bytes), lossless: true },
   };
+}
+
+/**
+ * Metadata-only cleaning for any accepted image. HEIC cannot be stripped in place, so it is
+ * converted to PNG first (as the single-file view does), which already leaves its metadata behind.
+ */
+export async function removeMetadataFromImage(file: File, before: MetadataReport | null): Promise<ProcessorResult> {
+  if (!isHeic(file)) return removeMetadataOnly(file, before);
+  const result = await removeMetadataOnly(await decodeHeicToPng(file), before);
+  return { ...result, metadata: result.metadata && { ...result.metadata, lossless: false } };
 }

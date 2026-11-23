@@ -1,5 +1,6 @@
 import { isAbortError } from '@/lib/media';
-import type { FlowAsset } from '@/types/flow';
+import { METADATA_LABELS, type MetadataKind, type MetadataReport } from '@/lib/metadata/scan';
+import type { FlowAsset, FlowBatchState } from '@/types/flow';
 import type { ProcessorOptions, ProcessorResult } from '@/types/media';
 
 export interface BatchCallbacks {
@@ -13,7 +14,7 @@ export interface BatchCallbacks {
 export async function runSequentialImageBatch(
   assets: FlowAsset[],
   signal: AbortSignal,
-  processor: (file: File, options: ProcessorOptions) => Promise<ProcessorResult>,
+  processor: (file: File, options: ProcessorOptions, asset: FlowAsset) => Promise<ProcessorResult>,
   callbacks: BatchCallbacks,
 ): Promise<void> {
   for (let index = 0; index < assets.length; index += 1) {
@@ -28,10 +29,12 @@ export async function runSequentialImageBatch(
       const result = await processor(file, {
         signal,
         onProgress: (progress) => callbacks.onProgress(asset, progress.progress, progress.message, index, assets.length),
-      });
+      }, asset);
+      // A metadata-only result never "applies" a watermark repair, but its stripped file is the result.
+      const keep = result.detection.applied || result.operation === 'metadata';
       callbacks.onComplete(
         asset,
-        result.detection.applied ? result : { ...result, blob: file, mimeType: file.type, fileName: file.name },
+        keep ? result : { ...result, blob: file, mimeType: file.type, fileName: file.name },
         index,
         assets.length,
       );
@@ -44,4 +47,35 @@ export async function runSequentialImageBatch(
       callbacks.onError(asset, error, index, assets.length);
     }
   }
+}
+
+const shortLabels = (kinds: MetadataKind[]) => kinds.map((kind) => METADATA_LABELS[kind]).join(', ');
+
+/** Card state and wording for a finished batch item. `before` is the scan of the file as imported. */
+export function describeBatchResult(
+  result: ProcessorResult,
+  before: MetadataReport | null | undefined,
+): { state: Extract<FlowBatchState, 'complete' | 'clean'>; message: string } {
+  if (result.operation === 'metadata') {
+    const source = result.metadata?.before ?? before;
+    if (source && source.container !== 'unknown' && source.found.length === 0) {
+      return { state: 'clean', message: 'No hidden metadata; original kept' };
+    }
+    const leftover = result.metadata?.after.found ?? [];
+    if (leftover.length) return { state: 'complete', message: `Metadata partly removed; still has ${shortLabels(leftover)}` };
+    return {
+      state: 'complete',
+      message: source?.container === 'unknown' ? 'Converted to PNG, metadata removed' : 'Metadata removed, pixels unchanged',
+    };
+  }
+  if (result.detection.applied) {
+    const textureRepair = result.detection.repairMode === 'bounded-texture' || result.detection.repairMode?.startsWith('content-aware');
+    const leftover = result.metadata?.after.found ?? [];
+    const metaNote = leftover.length ? `; still has ${shortLabels(leftover)}` : before?.found.length ? ' and metadata removed' : '';
+    return { state: 'complete', message: `${textureRepair ? 'Visible mark repaired with content-aware fill' : 'Visible mark repaired'}${metaNote}` };
+  }
+  const kept = result.detection.repairMode === 'unchanged-unsafe'
+    ? result.detection.qualityWarning ?? 'Unsafe removal avoided; original kept'
+    : 'No supported mark found; original kept';
+  return { state: 'clean', message: before?.found.length ? `${kept} (it still has hidden metadata)` : kept };
 }
