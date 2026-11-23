@@ -7,7 +7,10 @@ import {
   type ExtendedMeta,
   type PixelImageData,
 } from './image-panorama-fallback';
-import { repairWithMigan, type MiganSessionFactory } from './migan-inpaint';
+import { repairWithMigan, type MiganRequest, type MiganSessionFactory } from './migan-inpaint';
+
+/** Marks this small always get an MI-GAN pass after the reverse solve. */
+const TINY_MARK_SIZE = 18;
 import {
   hasMarkEvidence,
   isGeminiPlacement,
@@ -119,13 +122,17 @@ export async function cleanImageData(
   // offline fallback for clipped/black output; for a faint leftover its smears
   // are worse than the plain reverse-alpha result.
   const resultMeta = result.meta as ExtendedMeta;
-  const outlinePosition = resultMeta.applied && resultMeta.repairMode === 'reverse-alpha' ? resultMeta.position : null;
-  const outlineLeft = !!outlinePosition && await outlineResidual(result.imageData, outlinePosition) >= OUTLINE_RESIDUAL_SCORE;
+  const removedPosition = resultMeta.applied && resultMeta.repairMode === 'reverse-alpha' ? resultMeta.position : null;
+  const outlineLeft = !!removedPosition && await outlineResidual(result.imageData, removedPosition) >= OUTLINE_RESIDUAL_SCORE;
+  // Below ~18px (a picture saved at a third of Gemini's size) resampling has mixed the mark into
+  // its neighbours, so the exact solve leaves a faint trace that no score measures reliably.
+  const tinyMark = !!removedPosition && removedPosition.width <= TINY_MARK_SIZE;
+  const request: MiganRequest = outlineLeft && removedPosition
+    ? { force: true, accept: async (candidate) => await outlineResidual(candidate, removedPosition) < OUTLINE_RESIDUAL_SCORE }
+    : { force: tinyMark };
   let migan: ImageDataRemovalResult | null = null;
   try {
-    migan = await repairWithMigan(original, reverseAlpha, result, options.miganSessionFactory, outlineLeft && outlinePosition
-      ? async (candidate) => await outlineResidual(candidate, outlinePosition) < OUTLINE_RESIDUAL_SCORE
-      : undefined);
+    migan = await repairWithMigan(original, reverseAlpha, result, options.miganSessionFactory, request);
   } catch (error) {
     // The optional model may be unavailable (offline, or not shipped to this host).
     options.onMiganError?.(error);

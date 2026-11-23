@@ -216,20 +216,28 @@ export function wantsContentAwareRepair(meta: ExtendedMeta): boolean {
  * and it repaints the masked pixels entirely, so no residual comparison is made.
  * Returns null when MI-GAN is not applicable or its result is not acceptable.
  */
+export interface MiganRequest {
+  /**
+   * Run even though the filled-shape check saw no leftover: a thin outline was measured, or the
+   * mark is too small for the reverse solve to be exact after resampling.
+   */
+  force?: boolean;
+  /**
+   * Replaces the proportionality test as the acceptance check, e.g. "the outline is gone" (an
+   * outline is not a residual that test can size).
+   */
+  accept?: (candidate: PixelImageData) => Promise<boolean>;
+}
+
 export async function repairWithMigan(
   source: PixelImageData,
   reverseAlpha: PixelImageData,
   current: ImageDataRemovalResult,
   sessionFactory: MiganSessionFactory = browserSessionFactory,
-  /**
-   * Set when the reverse-alpha result kept a thin outline: MI-GAN then runs even though
-   * the filled-shape check saw nothing, and its fill is accepted only if this confirms
-   * the outline is gone (the outline is not a residual the proportionality test can size).
-   */
-  outlineRemoved?: (candidate: PixelImageData) => Promise<boolean>,
+  request: MiganRequest = {},
 ): Promise<ImageDataRemovalResult | null> {
   const meta = current.meta as ExtendedMeta;
-  if (!(outlineRemoved || wantsContentAwareRepair(meta)) || !meta.position) return null;
+  if (!(request.force || wantsContentAwareRepair(meta)) || !meta.position) return null;
   const mask = createMiganMask(source, reverseAlpha, meta.position);
   const window = windowForMask(source, mask);
   if (!window) return null;
@@ -245,7 +253,7 @@ export async function repairWithMigan(
   if (!(modelOutput instanceof Uint8Array)) return null;
   const candidate = compositeMiganWindow(source, mask, window, modelOutput);
   if (!isBoundedTextureRepairSafe(source, reverseAlpha, candidate, meta.position)) return null;
-  if (outlineRemoved ? !(await outlineRemoved(candidate)) : !isProportionateRepair(source, reverseAlpha, candidate, mask, meta.position)) return null;
+  if (request.accept ? !(await request.accept(candidate)) : !isProportionateRepair(source, reverseAlpha, candidate, mask, meta.position)) return null;
 
   return {
     imageData: candidate,

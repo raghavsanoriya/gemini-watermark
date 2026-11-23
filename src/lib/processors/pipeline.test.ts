@@ -46,4 +46,12 @@ describe('image pipeline safeguards', () => {
     expect((result.meta as { repairMode?: string }).repairMode).toBe('content-aware-migan');
     expect(await outlineResidual(result.imageData, result.meta.position!)).toBeLessThan(OUTLINE_RESIDUAL_SCORE);
   }, 120_000);
+
+  // A picture saved at a third of Gemini's size: the 17px mark is mixed into its neighbours.
+  it.skipIf(!modelAvailable)('gives tiny marks an MI-GAN pass after the exact solve', async () => {
+    const result = await cleanImageData(await load(demo('timber-before.jpg'), 450), { miganSessionFactory: nodeMiganSessionFactory });
+    expect(result.meta.applied).toBe(true);
+    expect(result.meta.position!.width).toBeLessThanOrEqual(18);
+    expect((result.meta as { repairMode?: string }).repairMode).toBe('content-aware-migan');
+  }, 120_000);
 });
