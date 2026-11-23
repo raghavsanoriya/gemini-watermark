@@ -9,6 +9,7 @@ import {
   ImagePlus,
   RefreshCw,
   RotateCcw,
+  ShieldCheck,
   Sparkles,
   Square,
   Upload,
@@ -16,9 +17,12 @@ import {
   X,
 } from 'lucide-react';
 import { decodeHeicToPng, formatBytes, isAbortError, isHeic, needsVideoOverride, ProcessorError, validateMediaFile } from '@/lib/media';
+import { removeMetadataOnly, scanFile } from '@/lib/metadata/clean';
+import type { MetadataReport } from '@/lib/metadata/scan';
 import { processImage } from '@/lib/processors/image';
 import { processImageOnServer, SERVER_MAX_UPLOAD_BYTES, SERVER_MODE } from '@/lib/server-client';
 import type { MediaKind, ProcessingJob, ProcessorResult } from '@/types/media';
+import { MetadataPanel } from './MetadataPanel';
 
 const initialJob: ProcessingJob = { phase: 'idle', progress: 0, message: '' };
 
@@ -51,6 +55,7 @@ export function MediaWorkspace() {
   const [showWarning, setShowWarning] = useState(false);
   const [comparison, setComparison] = useState<'before' | 'after'>('after');
   const [target, setTarget] = useState<'device' | 'server'>('device');
+  const [metaBefore, setMetaBefore] = useState<MetadataReport | null>(null);
   const serverAvailable = SERVER_MODE && kind === 'image' && !!file && file.size <= SERVER_MAX_UPLOAD_BYTES;
   const useServer = serverAvailable && target === 'server';
   // processImageOnServer tags its results, so the wording follows where the file really went.
@@ -89,6 +94,7 @@ export function MediaWorkspace() {
     setDuration(null);
     setShowWarning(false);
     setComparison('after');
+    setMetaBefore(null);
     setJob(initialJob);
   };
 
@@ -97,6 +103,8 @@ export function MediaWorkspace() {
     setJob({ phase: 'validating', progress: 0, message: 'Checking file…' });
     try {
       const nextKind = validateMediaFile(picked);
+      // Scan the file as chosen: HEIC is converted below, which already leaves its metadata behind.
+      setMetaBefore(nextKind === 'image' ? await scanFile(picked).catch(() => null) : null);
       // Most browsers cannot preview HEIC, so decode it to PNG up front.
       if (isHeic(picked)) setJob({ phase: 'validating', progress: 0, message: 'Decoding HEIC photo locally…' });
       const next = isHeic(picked) ? await decodeHeicToPng(picked) : picked;
@@ -151,8 +159,12 @@ export function MediaWorkspace() {
         });
         return;
       }
+      // The cleaned image is re-encoded, which drops metadata; re-scan the download to confirm it.
+      const metadata = kind === 'image'
+        ? { before: metaBefore, after: await scanFile(processed.blob), lossless: false }
+        : undefined;
       const url = createObjectUrl(processed.blob);
-      setResult({ ...processed, url });
+      setResult({ ...processed, operation: 'watermark', metadata, url });
       setComparison('after');
       setJob({
         phase: 'complete',
@@ -174,6 +186,27 @@ export function MediaWorkspace() {
       }
     } finally {
       abortRef.current = null;
+    }
+  };
+
+  const startMetadataClean = async () => {
+    if (!file || kind !== 'image') return;
+    setShowWarning(false);
+    setJob({ phase: 'processing', progress: 0.3, message: 'Removing file metadata locally…' });
+    try {
+      const processed = await removeMetadataOnly(file, metaBefore);
+      revokeObjectUrl(result?.url);
+      const url = createObjectUrl(processed.blob);
+      setResult({ ...processed, url });
+      setComparison('after');
+      setJob({ phase: 'complete', progress: 1, message: 'Metadata removed. The picture itself is unchanged.' });
+    } catch (error) {
+      setJob({
+        phase: 'failed',
+        progress: 0,
+        message: error instanceof Error ? error.message : 'Metadata removal failed.',
+        errorCode: error instanceof ProcessorError ? error.code : 'processing-failed',
+      });
     }
   };
 
@@ -234,7 +267,9 @@ export function MediaWorkspace() {
             )}
             {job.phase === 'complete' && (
               <div className="done"><Check size={16} />
-                {`Visible mark repaired ${cleanedOnServer ? 'on the server' : 'locally'}${result?.detection.repairMode?.startsWith('content-aware') || result?.detection.repairMode === 'bounded-texture' ? ', with content-aware fill' : ''}`}
+                {result?.operation === 'metadata'
+                  ? 'Metadata removed locally'
+                  : `Visible mark repaired ${cleanedOnServer ? 'on the server' : 'locally'}${result?.detection.repairMode?.startsWith('content-aware') || result?.detection.repairMode === 'bounded-texture' ? ', with content-aware fill' : ''}`}
               </div>
             )}
             <button className="remove-file" aria-label="Remove selected file" onClick={reset}><X size={17} /></button>
@@ -261,7 +296,21 @@ export function MediaWorkspace() {
               <button onClick={() => void startProcessing(true)}>Process anyway</button>
             </div>
           )}
-          {(job.phase === 'failed' || job.phase === 'cancelled') && <div className="inline-error" role="alert"><AlertTriangle size={16} /><span>{job.message}</span><button onClick={reset}><RotateCcw size={14} /> Start over</button></div>}
+          {kind === 'image' && (job.phase === 'ready' || job.phase === 'complete') && (
+            <MetadataPanel
+              before={metaBefore}
+              outcome={job.phase === 'complete' ? result?.metadata : undefined}
+              action={<button className="process-btn secondary meta-action" onClick={() => void startMetadataClean()}><ShieldCheck size={16} /> Remove metadata only</button>}
+            />
+          )}
+          {(job.phase === 'failed' || job.phase === 'cancelled') && (
+            <div className="inline-error" role="alert"><AlertTriangle size={16} /><span>{job.message}</span>
+              {kind === 'image' && (job.errorCode === 'no-watermark' || job.errorCode === 'unsafe-removal') && (
+                <button onClick={() => void startMetadataClean()}><ShieldCheck size={14} /> Remove metadata only</button>
+              )}
+              <button onClick={reset}><RotateCcw size={14} /> Start over</button>
+            </div>
+          )}
         </>
       )}
     </div>

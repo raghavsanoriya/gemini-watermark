@@ -1,3 +1,5 @@
+import type { MetadataReport } from '@/lib/metadata/scan';
+
 export type MediaKind = 'image' | 'video';
 
 export type ProcessingPhase =
@@ -49,12 +51,23 @@ export interface WatermarkDetection {
   qualityWarning?: string | null;
 }
 
+export interface MetadataOutcome {
+  /** What the original file carried; container 'unknown' for HEIC, which is converted before cleaning. */
+  before: MetadataReport | null;
+  /** A re-scan of the file offered for download. */
+  after: MetadataReport;
+  /** True when the pixels were not re-encoded. */
+  lossless: boolean;
+}
+
 export interface ProcessorResult {
   blob: Blob;
   mimeType: string;
   fileName: string;
   detection: WatermarkDetection;
   audioPreserved?: boolean;
+  operation?: 'watermark' | 'metadata';
+  metadata?: MetadataOutcome;
 }
 
 export interface ProcessingJob {

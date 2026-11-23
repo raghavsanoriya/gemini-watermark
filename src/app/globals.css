@@ -316,3 +316,16 @@
   .switch-tab { flex: none; }
   .switch-tab span { padding:var(--space-xs) var(--space-sm); font-size: var(--text-sm); }
 }
+
+/* File metadata report under the workspace actions */
+.meta-panel { margin-top:var(--space-sm); padding:var(--space-sm); border:1px solid var(--line); border-radius:12px; background:var(--c-101219); text-align:left; font-size:12px; color:var(--muted); }
+.meta-panel h3 { margin:0 0 var(--space-xs); font:500 13px var(--face-sans); color:var(--cream); }
+.meta-panel p { margin:var(--space-xs) 0 0; display:flex; align-items:flex-start; gap:var(--space-2xs); }
+.meta-panel svg { flex:none; margin-top:1px; }
+.meta-tags { display:flex; flex-wrap:wrap; gap:var(--space-2xs); margin:0; padding:0; list-style:none; }
+.meta-tags li { border:1px solid var(--c-ffffff24); border-radius:99px; padding:var(--space-3xs) var(--space-xs); color:var(--cream); }
+.meta-panel .meta-ok { color:var(--lime); }
+.meta-panel .meta-warn { color:var(--color-error); font-weight:500; }
+.meta-panel .meta-action { margin-top:var(--space-sm); }
+.file-actions { flex-wrap:wrap; }
+@media (min-width:701px) { .file-actions .file-meta { flex:1 1 160px; min-width:0; } }
