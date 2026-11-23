@@ -77,10 +77,14 @@ export function describeBatchResult(
     };
   }
   if (result.detection.applied) {
-    const textureRepair = result.detection.repairMode === 'bounded-texture' || result.detection.repairMode?.startsWith('content-aware');
+    const mode = result.detection.repairMode;
+    const repair = mode === 'content-aware-lama'
+      ? 'Visible mark repaired with best-quality AI fill'
+      : mode === 'bounded-texture' || mode?.startsWith('content-aware') ? 'Visible mark repaired with content-aware fill' : 'Visible mark repaired';
     const leftover = result.metadata?.after.found ?? [];
     const metaNote = leftover.length ? `; still has ${shortLabels(leftover)}` : before?.found.length ? ' and metadata removed' : '';
-    return { state: 'complete', message: `${textureRepair ? 'Visible mark repaired with content-aware fill' : 'Visible mark repaired'}${metaNote}` };
+    const fallback = result.notice ? ' (best-quality model unavailable, standard fill used)' : '';
+    return { state: 'complete', message: `${repair}${metaNote}${fallback}` };
   }
   const kept = result.detection.repairMode === 'unchanged-unsafe'
     ? result.detection.qualityWarning ?? 'Unsafe removal avoided; original kept'

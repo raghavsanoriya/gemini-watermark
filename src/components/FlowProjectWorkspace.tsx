@@ -21,6 +21,7 @@ import { decodeHeicToPng, formatBytes, isHeic } from '@/lib/media';
 import { removeMetadataFromImage, removeWatermarkAndMetadata, scanFile } from '@/lib/metadata/clean';
 import { METADATA_LABELS, type MetadataReport } from '@/lib/metadata/scan';
 import { processImage } from '@/lib/processors/image';
+import { useRepairQuality } from '@/lib/quality-preference';
 import type { FlowArchiveManifest, FlowAsset, FlowAssetBatchItem } from '@/types/flow';
 import type { ProcessorOptions, ProcessorResult } from '@/types/media';
 import { MetadataPanel } from './MetadataPanel';
@@ -107,6 +108,7 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
   const [previewAsset, setPreviewAsset] = useState<FlowAsset | null>(null);
   const [previewSide, setPreviewSide] = useState<'before' | 'after'>('after');
   const [meta, setMeta] = useState<MetaMap>({});
+  const [quality, setQuality] = useRepairQuality();
   const metaRef = useRef<MetaMap>({});
   const lastOperationRef = useRef<BatchOperation>('watermark');
 
@@ -257,7 +259,7 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
 
   // The one-button clean: watermark and metadata together; images without a mark still lose their metadata.
   const removeMark = async (file: File, options: ProcessorOptions, asset: FlowAsset): Promise<ProcessorResult> => (
-    removeWatermarkAndMetadata(file, options, processImage, await scanOf(file, asset))
+    removeWatermarkAndMetadata(file, { ...options, quality }, processImage, await scanOf(file, asset))
   );
 
   const removeMetadata = async (file: File, _options: ProcessorOptions, asset: FlowAsset): Promise<ProcessorResult> => {
@@ -410,6 +412,10 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
       <div className="flow-toolbar">
         {variant === 'flow' && <label>Project<select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}><option value="all">All projects</option>{manifest.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>}
         {metaSummary && <span className="flow-meta-summary"><ShieldCheck size={13} /> {metaSummary}</span>}
+        <label className="quality-toggle" title="Uses the larger LaMa model to repaint leftovers. Better on hair and edges, but each repaint can take a minute, and the 92 MB model downloads once, only when a repaint is needed.">
+          <input type="checkbox" checked={quality === 'best'} disabled={busy} onChange={(event) => setQuality(event.target.checked ? 'best' : 'standard')} />
+          <span>Best quality <small>slower</small></span>
+        </label>
         <button className="flow-select-all" onClick={toggleAllVisible}>{visibleSelected === visibleSupported.length && visibleSupported.length ? 'Clear visible' : 'Select visible'} <span>{visibleSelected}/{visibleSupported.length}</span></button>
       </div>
 

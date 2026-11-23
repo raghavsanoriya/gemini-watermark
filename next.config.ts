@@ -13,7 +13,7 @@ const driveConfigured = Boolean(
 // - connect-src 'self': page code cannot send media to any other server.
 // - 'unsafe-inline': Next.js inline bootstrap scripts (no nonces on a static page).
 // - 'unsafe-eval': the HEIC decoder (heic2any, Emscripten embind) builds functions at runtime.
-// - 'wasm-unsafe-eval': the MI-GAN model and the HEIC decoder run as WebAssembly.
+// - 'wasm-unsafe-eval': the MI-GAN and LaMa models and the HEIC decoder run as WebAssembly.
 // - blob:: previews, results and the decoder's worker are object URLs.
 // Google hosts are added only when the optional Drive picker is configured.
 const google = driveConfigured

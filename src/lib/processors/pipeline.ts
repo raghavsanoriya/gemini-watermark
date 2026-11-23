@@ -7,7 +7,9 @@ import {
   type ExtendedMeta,
   type PixelImageData,
 } from './image-panorama-fallback';
-import { repairWithMigan, type MiganRequest, type MiganSessionFactory } from './migan-inpaint';
+import { lamaModel, type LamaSessionFactory } from './lama-inpaint';
+import { miganModel, repairWithModel, type MiganRequest, type MiganSessionFactory } from './migan-inpaint';
+import type { RepairQuality } from '@/types/media';
 
 /** Marks this small always get an MI-GAN pass after the reverse solve. */
 const TINY_MARK_SIZE = 18;
@@ -36,6 +38,12 @@ export interface CleanImageOptions {
   miganSessionFactory?: MiganSessionFactory;
   /** Called when the optional MI-GAN repair fails (the pipeline then falls back). */
   onMiganError?: (error: unknown) => void;
+  /** 'best' tries the larger LaMa model first and falls back to MI-GAN if it cannot run or is rejected. */
+  quality?: RepairQuality;
+  /** Loads LaMa; omitted in the browser, where the self-hosted model is downloaded. */
+  lamaSessionFactory?: LamaSessionFactory;
+  /** Called when the LaMa repair fails to load or run (MI-GAN is tried next). */
+  onLamaError?: (error: unknown) => void;
 }
 
 /**
@@ -130,14 +138,23 @@ export async function cleanImageData(
   const request: MiganRequest = outlineLeft && removedPosition
     ? { force: true, accept: async (candidate) => await outlineResidual(candidate, removedPosition) < OUTLINE_RESIDUAL_SCORE }
     : { force: tinyMark };
-  let migan: ImageDataRemovalResult | null = null;
-  try {
-    migan = await repairWithMigan(original, reverseAlpha, result, options.miganSessionFactory, request);
-  } catch (error) {
-    // The optional model may be unavailable (offline, or not shipped to this host).
-    options.onMiganError?.(error);
+  let repaired: ImageDataRemovalResult | null = null;
+  if (options.quality === 'best') {
+    try {
+      repaired = await repairWithModel(original, reverseAlpha, result, lamaModel(options.lamaSessionFactory), request);
+    } catch (error) {
+      options.onLamaError?.(error);
+    }
   }
-  if (migan) return migan;
+  if (!repaired) {
+    try {
+      repaired = await repairWithModel(original, reverseAlpha, result, miganModel(options.miganSessionFactory), request);
+    } catch (error) {
+      // The optional model may be unavailable (offline, or not shipped to this host).
+      options.onMiganError?.(error);
+    }
+  }
+  if (repaired) return repaired;
   if (
     located.meta.applied &&
     (result.meta as ExtendedMeta).repairMode === 'content-aware-telea' &&

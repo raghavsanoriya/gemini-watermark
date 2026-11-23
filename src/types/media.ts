@@ -28,6 +28,7 @@ export type ImageRepairMode =
   | 'bounded-texture'
   | 'content-aware-telea'
   | 'content-aware-migan'
+  | 'content-aware-lama'
   | 'unchanged-unsafe';
 export type RepairSafetyOutcome = 'not-needed' | 'passed' | 'rejected';
 
@@ -68,6 +69,8 @@ export interface ProcessorResult {
   audioPreserved?: boolean;
   operation?: 'watermark' | 'metadata';
   metadata?: MetadataOutcome;
+  /** Something the user should know about how the result was made, e.g. a model fallback. */
+  notice?: string;
 }
 
 export interface ProcessingJob {
@@ -77,7 +80,11 @@ export interface ProcessingJob {
   errorCode?: ProcessorErrorCode;
 }
 
+/** 'best' repaints leftovers with the larger LaMa model instead of MI-GAN (slower, browser only). */
+export type RepairQuality = 'standard' | 'best';
+
 export interface ProcessorOptions {
   signal: AbortSignal;
   onProgress: (progress: ProcessorProgress) => void;
+  quality?: RepairQuality;
 }

@@ -210,12 +210,6 @@ export function wantsContentAwareRepair(meta: ExtendedMeta): boolean {
   return !!meta.position && (meta.repairMode === 'content-aware-telea' || meta.repairSafety === 'rejected');
 }
 
-/**
- * Runs MI-GAN over the mark and accepts it when it passes the same safety gate as
- * Telea. It only runs after the pipeline confirmed a visible leftover or damage,
- * and it repaints the masked pixels entirely, so no residual comparison is made.
- * Returns null when MI-GAN is not applicable or its result is not acceptable.
- */
 export interface MiganRequest {
   /**
    * Run even though the filled-shape check saw no leftover: a thin outline was measured, or the
@@ -229,6 +223,81 @@ export interface MiganRequest {
   accept?: (candidate: PixelImageData) => Promise<boolean>;
 }
 
+/** An inpainting network the repair step can run over the mark's window. */
+export interface InpaintModel {
+  name: 'migan' | 'lama';
+  /** The image region the network sees, or null when the image is too small. */
+  window: (image: PixelImageData, mask: Uint8Array) => MiganWindow | null;
+  /**
+   * Fills a packed window (planar RGB uint8; mask 255 = keep, 0 = hole) and returns planar RGB
+   * uint8 of the same window size, or null when the network gave no usable output.
+   */
+  fill: (packed: { image: Uint8Array; mask: Uint8Array }, window: MiganWindow) => Promise<Uint8Array | null>;
+}
+
+export function miganModel(sessionFactory: MiganSessionFactory = browserSessionFactory): InpaintModel {
+  return {
+    name: 'migan',
+    window: windowForMask,
+    fill: async (packed, window) => {
+      const ort = await import('onnxruntime-web/wasm');
+      const session = await loadSession(sessionFactory);
+      const tensors = await session.run({
+        image: new ort.Tensor('uint8', packed.image, [1, 3, window.height, window.width]),
+        mask: new ort.Tensor('uint8', packed.mask, [1, 1, window.height, window.width]),
+      });
+      const output = tensors.result?.data;
+      return output instanceof Uint8Array ? output : null;
+    },
+  };
+}
+
+const REPAIR_LABELS = {
+  migan: { source: '+migan-content-aware', mode: 'content-aware-migan' },
+  lama: { source: '+lama-content-aware', mode: 'content-aware-lama' },
+} as const;
+
+/**
+ * Runs an inpainting network over the mark and accepts its fill only when it passes the same
+ * safety gate as Telea, plus either the proportionality test or the request's own check. It runs
+ * after the pipeline confirmed a visible leftover or damage, or when the request forces it.
+ * Returns null when the repair is not applicable or its result is not acceptable.
+ */
+export async function repairWithModel(
+  source: PixelImageData,
+  reverseAlpha: PixelImageData,
+  current: ImageDataRemovalResult,
+  model: InpaintModel,
+  request: MiganRequest = {},
+): Promise<ImageDataRemovalResult | null> {
+  const meta = current.meta as ExtendedMeta;
+  if (!(request.force || wantsContentAwareRepair(meta)) || !meta.position) return null;
+  const mask = createMiganMask(source, reverseAlpha, meta.position);
+  const window = model.window(source, mask);
+  if (!window) return null;
+
+  const modelOutput = await model.fill(packMiganWindow(source, mask, window), window);
+  if (!modelOutput) return null;
+  const candidate = compositeMiganWindow(source, mask, window, modelOutput);
+  if (!isBoundedTextureRepairSafe(source, reverseAlpha, candidate, meta.position)) return null;
+  if (request.accept ? !(await request.accept(candidate)) : !isProportionateRepair(source, reverseAlpha, candidate, mask, meta.position)) return null;
+
+  const label = REPAIR_LABELS[model.name];
+  return {
+    imageData: candidate,
+    meta: {
+      ...meta,
+      applied: true,
+      skipReason: null,
+      source: `${meta.source.replace('+telea-content-aware-repair', '')}${label.source}`,
+      repairMode: label.mode as ImageRepairMode,
+      repairSafety: 'passed',
+      qualityWarning: null,
+    } as WatermarkMeta,
+  };
+}
+
+/** MI-GAN repair (the default model); see repairWithModel. */
 export async function repairWithMigan(
   source: PixelImageData,
   reverseAlpha: PixelImageData,
@@ -236,37 +305,7 @@ export async function repairWithMigan(
   sessionFactory: MiganSessionFactory = browserSessionFactory,
   request: MiganRequest = {},
 ): Promise<ImageDataRemovalResult | null> {
-  const meta = current.meta as ExtendedMeta;
-  if (!(request.force || wantsContentAwareRepair(meta)) || !meta.position) return null;
-  const mask = createMiganMask(source, reverseAlpha, meta.position);
-  const window = windowForMask(source, mask);
-  if (!window) return null;
-
-  const packed = packMiganWindow(source, mask, window);
-  const ort = await import('onnxruntime-web/wasm');
-  const session = await loadSession(sessionFactory);
-  const tensors = await session.run({
-    image: new ort.Tensor('uint8', packed.image, [1, 3, window.height, window.width]),
-    mask: new ort.Tensor('uint8', packed.mask, [1, 1, window.height, window.width]),
-  });
-  const modelOutput = tensors.result?.data;
-  if (!(modelOutput instanceof Uint8Array)) return null;
-  const candidate = compositeMiganWindow(source, mask, window, modelOutput);
-  if (!isBoundedTextureRepairSafe(source, reverseAlpha, candidate, meta.position)) return null;
-  if (request.accept ? !(await request.accept(candidate)) : !isProportionateRepair(source, reverseAlpha, candidate, mask, meta.position)) return null;
-
-  return {
-    imageData: candidate,
-    meta: {
-      ...meta,
-      applied: true,
-      skipReason: null,
-      source: `${meta.source.replace('+telea-content-aware-repair', '')}+migan-content-aware`,
-      repairMode: 'content-aware-migan' as ImageRepairMode,
-      repairSafety: 'passed',
-      qualityWarning: null,
-    } as WatermarkMeta,
-  };
+  return repairWithModel(source, reverseAlpha, current, miganModel(sessionFactory), request);
 }
 
 /** Mean per-channel change between two images inside the repair mask. */

@@ -29,6 +29,9 @@
 .preview-shell.full-image-preview { height:auto; min-height:0; overflow:visible; display:block; background:transparent; }
 .preview-shell.full-image-preview img { display:block; width:auto; max-width:100%; height:auto; max-height:75vh; margin-inline:auto; object-fit:contain; border-radius:15px; }
 .workspace-hub { scroll-margin-top:24px; }
+.quality-toggle { display:flex; align-items:center; white-space:nowrap; gap:var(--space-xs); padding:var(--space-xs) var(--space-sm); border:1px solid var(--line); border-radius:10px; background:var(--c-101219); color:var(--cream); font-size:12px; font-weight:500; cursor:pointer; }
+.quality-toggle input { accent-color:var(--lime); margin:0; }
+.quality-toggle small { color:var(--c-9ea1aa); font-weight:400; margin-left:var(--space-3xs); }
 .target-toggle { display:flex; gap:var(--space-2xs); padding:var(--space-2xs); border:1px solid var(--line); border-radius:10px; background:var(--c-101219); }
 .target-toggle button { border:0; border-radius:7px; padding:var(--space-xs) var(--space-sm); background:transparent; color:var(--c-9ea1aa); font-size:12px; font-weight:500; cursor:pointer; }
 .target-toggle button.active { color:var(--ink); background:var(--lime); }

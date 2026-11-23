@@ -20,6 +20,7 @@ import { decodeHeicToPng, formatBytes, isAbortError, isHeic, needsVideoOverride,
 import { hasNothingToRemove, isMetadataFallback, removeMetadataOnly, removeWatermarkAndMetadata, scanFile } from '@/lib/metadata/clean';
 import type { MetadataReport } from '@/lib/metadata/scan';
 import { processImage } from '@/lib/processors/image';
+import { useRepairQuality } from '@/lib/quality-preference';
 import { processImageOnServer, SERVER_MAX_UPLOAD_BYTES, SERVER_MODE } from '@/lib/server-client';
 import type { MediaKind, ProcessingJob, ProcessorResult } from '@/types/media';
 import { MetadataPanel } from './MetadataPanel';
@@ -56,6 +57,7 @@ export function MediaWorkspace() {
   const [comparison, setComparison] = useState<'before' | 'after'>('after');
   const [target, setTarget] = useState<'device' | 'server'>('device');
   const [metaBefore, setMetaBefore] = useState<MetadataReport | null>(null);
+  const [quality, setQuality] = useRepairQuality();
   const serverAvailable = SERVER_MODE && kind === 'image' && !!file && file.size <= SERVER_MAX_UPLOAD_BYTES;
   const useServer = serverAvailable && target === 'server';
   // processImageOnServer tags its results, so the wording follows where the file really went.
@@ -144,6 +146,7 @@ export function MediaWorkspace() {
           ? processImage
           : (await import('@/lib/processors/video')).processVideo;
       const processorOptions = {
+        quality,
         signal: controller.signal,
         onProgress: ({ phase, progress, message }: { phase: ProcessingJob['phase']; progress: number; message: string }) => setJob({ phase, progress, message }),
       };
@@ -175,7 +178,7 @@ export function MediaWorkspace() {
           ? `${processed.detection.repairMode === 'unchanged-unsafe'
             ? processed.detection.qualityWarning ?? 'The mark was left alone because removing it could damage this area.'
             : 'No Gemini, Veo or Flow mark was found, so the picture is unchanged.'} Its hidden metadata was removed.`
-          : `${kind === 'image' ? (hasNothingToRemove(metaBefore) ? 'Watermark removed; the file had no hidden metadata.' : 'Watermark and metadata removed.') : 'Your cleaned video is ready.'}${contentAware ? ' A safe local content-aware repair was used.' : ''}`,
+          : `${kind === 'image' ? (hasNothingToRemove(metaBefore) ? 'Watermark removed; the file had no hidden metadata.' : 'Watermark and metadata removed.') : 'Your cleaned video is ready.'}${processed.detection.repairMode === 'content-aware-lama' ? ' The best-quality AI fill was used.' : contentAware ? ' A safe local content-aware repair was used.' : ''}${processed.notice ? ` ${processed.notice}` : ''}`,
       });
     } catch (error) {
       if (isAbortError(error)) {
@@ -273,7 +276,7 @@ export function MediaWorkspace() {
               <div className="done"><Check size={16} />
                 {result?.operation === 'metadata'
                   ? isMetadataFallback(result) ? 'No mark found, metadata removed locally' : 'Metadata removed locally'
-                  : `${kind === 'image' && !hasNothingToRemove(metaBefore) ? 'Watermark and metadata removed' : 'Visible mark repaired'} ${cleanedOnServer ? 'on the server' : 'locally'}${result?.detection.repairMode?.startsWith('content-aware') || result?.detection.repairMode === 'bounded-texture' ? ', with content-aware fill' : ''}`}
+                  : `${kind === 'image' && !hasNothingToRemove(metaBefore) ? 'Watermark and metadata removed' : 'Visible mark repaired'} ${cleanedOnServer ? 'on the server' : 'locally'}${result?.detection.repairMode === 'content-aware-lama' ? ', with best-quality AI fill' : result?.detection.repairMode?.startsWith('content-aware') || result?.detection.repairMode === 'bounded-texture' ? ', with content-aware fill' : ''}`}
               </div>
             )}
             <button className="remove-file" aria-label="Remove selected file" onClick={reset}><X size={17} /></button>
@@ -287,6 +290,12 @@ export function MediaWorkspace() {
                 <button role="radio" aria-checked={!useServer} className={!useServer ? 'active' : ''} onClick={() => setTarget('device')}>This device</button>
                 <button role="radio" aria-checked={useServer} className={useServer ? 'active' : ''} disabled={!serverAvailable} title={serverAvailable ? 'Uploads this image; it is cleaned in memory and not stored.' : `Server processing accepts images up to ${Math.round(SERVER_MAX_UPLOAD_BYTES / 1024 / 1024)} MB.`} onClick={() => setTarget('server')}>Upload to server</button>
               </div>
+            )}
+            {job.phase === 'ready' && kind === 'image' && !useServer && (
+              <label className="quality-toggle" title="Uses the larger LaMa model to repaint leftovers. Better on hair and edges, but it can take a minute, and the 92 MB model downloads once, only when a repaint is needed.">
+                <input type="checkbox" checked={quality === 'best'} onChange={(event) => setQuality(event.target.checked ? 'best' : 'standard')} />
+                <span>Best quality <small>slower</small></span>
+              </label>
             )}
             {job.phase === 'ready' && <button className="process-btn" onClick={() => void startProcessing()}>{kind === 'video' ? <><Video size={17} /> Remove visible mark</> : <><Sparkles size={17} /> Remove watermark &amp; metadata</>}</button>}
             {job.phase === 'complete' && <button className="process-btn" onClick={download}><Download size={17} /> Download {kind}</button>}

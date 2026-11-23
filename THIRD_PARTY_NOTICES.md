@@ -15,6 +15,17 @@ downloaded during development/build from the upstream Hugging Face repository
 and verified against SHA-256
 `6f1f3530a1a2324b19752018ce756088b07973cda8d7d890034ace5c8a48c40b`.
 
+## LaMa
+
+The optional "Best quality" repair uses LaMa (big-lama) from
+[advimman/lama](https://github.com/advimman/lama), copyright (c) 2021 Samsung
+Research, under the Apache License 2.0, in the ONNX export published by
+[OpenCV Zoo](https://huggingface.co/opencv/inpainting_lama) (Apache License 2.0).
+The model is downloaded during development/build from that repository, pinned to
+commit `aee6d22f0a13e5e35af1c9a1c3afd62841fc6f3f`, verified against SHA-256
+`7df918ac3921d3daf0aae1d219776cf0dc4e4935f035af81841b40adcf74fdf2`, and served
+from this site. The browser loads it only when the user turns on "Best quality".
+
 ## heic2any and libheif
 
 HEIC/HEIF photos are decoded in the browser with

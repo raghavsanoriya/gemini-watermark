@@ -1,5 +1,5 @@
 import { decodeHeicToPng, isHeic, outputFileName, ProcessorError } from '@/lib/media';
-import type { ProcessorOptions, ProcessorResult, WatermarkDetection } from '@/types/media';
+import type { ProcessorOptions, ProcessorResult, RepairQuality, WatermarkDetection } from '@/types/media';
 
 interface WorkerSuccess {
   id: string;
@@ -18,6 +18,15 @@ interface WorkerSuccess {
     qualityStatus?: string | null;
     qualityWarning?: string | null;
   };
+  /** Why the best-quality model could not be used, when it was asked for. */
+  lamaError?: string | null;
+}
+
+interface WorkerProgress {
+  id: string;
+  kind: 'progress';
+  message: string;
+  fraction?: number;
 }
 
 interface WorkerFailure {
@@ -36,7 +45,12 @@ function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number)
   });
 }
 
-function runImageWorker(imageData: ImageData, signal: AbortSignal): Promise<WorkerSuccess> {
+function runImageWorker(
+  imageData: ImageData,
+  signal: AbortSignal,
+  quality: RepairQuality,
+  onStatus: (message: string, fraction?: number) => void,
+): Promise<WorkerSuccess> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('../../workers/image.worker.ts', import.meta.url), { type: 'module' });
     const id = crypto.randomUUID();
@@ -52,8 +66,12 @@ function runImageWorker(imageData: ImageData, signal: AbortSignal): Promise<Work
       worker.terminate();
       reject(new ProcessorError('processing-failed', event.message || 'The image worker failed.'));
     };
-    worker.onmessage = (event: MessageEvent<WorkerSuccess | WorkerFailure>) => {
+    worker.onmessage = (event: MessageEvent<WorkerSuccess | WorkerFailure | WorkerProgress>) => {
       if (event.data.id !== id) return;
+      if ('kind' in event.data) {
+        onStatus(event.data.message, event.data.fraction);
+        return;
+      }
       signal.removeEventListener('abort', stop);
       worker.terminate();
       if (event.data.ok) resolve(event.data);
@@ -61,7 +79,7 @@ function runImageWorker(imageData: ImageData, signal: AbortSignal): Promise<Work
     };
 
     const buffer = imageData.data.buffer as ArrayBuffer;
-    worker.postMessage({ id, width: imageData.width, height: imageData.height, buffer }, [buffer]);
+    worker.postMessage({ id, width: imageData.width, height: imageData.height, buffer, quality }, [buffer]);
   });
 }
 
@@ -97,7 +115,11 @@ export async function processImage(input: File, options: ProcessorOptions): Prom
   bitmap.close();
 
   onProgress({ phase: 'processing', progress: 0.18, message: 'Locating the calibrated Gemini mark…' });
-  const output = await runImageWorker(context.getImageData(0, 0, canvas.width, canvas.height), signal);
+  const quality = options.quality ?? 'standard';
+  const output = await runImageWorker(context.getImageData(0, 0, canvas.width, canvas.height), signal, quality, (message, fraction) => {
+    // Model download fills 20-60%; the long repaint then sits at 65% until it finishes.
+    onProgress({ phase: 'processing', progress: fraction === undefined ? 0.65 : 0.2 + fraction * 0.4, message });
+  });
   const pixels = new ImageData(new Uint8ClampedArray(output.buffer), output.width, output.height);
   context.putImageData(pixels, 0, 0);
 
@@ -121,5 +143,6 @@ export async function processImage(input: File, options: ProcessorOptions): Prom
       qualityStatus: output.meta.qualityStatus,
       qualityWarning: output.meta.qualityWarning,
     },
+    ...(quality === 'best' && output.lamaError ? { notice: `The best-quality model could not be used (${output.lamaError}), so the standard AI fill was used.` } : {}),
   };
 }

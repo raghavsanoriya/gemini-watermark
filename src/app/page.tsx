@@ -157,6 +157,7 @@ export default function Home() {
             <details><summary>Which formats can I use?</summary><p>Images: PNG, JPG, WebP, and HEIC. Videos: MP4, MOV, WebM, MKV, MPG, and MPEG when your browser can decode them. Video exports as MP4/H.264.</p></details>
             <details><summary>Why was no mark detected?</summary><p>GemClean intentionally stops when it cannot confidently match a known Gemini, Veo, or Flow mark. This protects unrelated corner details from being changed.</p></details>
             <details><summary>Does this remove SynthID?</summary><p>No. SynthID is hidden in the pixels themselves, not in the file&rsquo;s metadata. GemClean repairs the visible corner mark and removes file metadata such as C2PA Content Credentials, the IPTC &ldquo;made with AI&rdquo; label, EXIF, GPS, XMP and AI prompts.</p></details>
+            <details><summary>What does &ldquo;Best quality&rdquo; do?</summary><p>When a leftover needs repainting, it uses the larger LaMa model instead of the standard one. It rebuilds hair, fabric edges and texture boundaries more faithfully, but a repaint can take up to a minute, and the 92 MB model downloads once, only the first time it is needed. Everything still runs on your device.</p></details>
             <details><summary>What if my image has no mark?</summary><p>The picture is left exactly as it was, but its hidden metadata is still removed, so you always get a cleaned file when there was something to clean.</p></details>
           </div>
         </div>
