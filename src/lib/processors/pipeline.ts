@@ -8,7 +8,16 @@ import {
   type PixelImageData,
 } from './image-panorama-fallback';
 import { repairWithMigan, type MiganSessionFactory } from './migan-inpaint';
-import { removeMarkByTemplateSearch } from './template-search';
+import { isGeminiPlacement, locateMarkByTemplate, removeMarkAt, removeMarkByTemplateSearch } from './template-search';
+
+type Box = { x: number; y: number; width: number; height: number };
+
+function overlap(a: Box, b: Box): number {
+  const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+  if (w <= 0 || h <= 0) return 0;
+  return (w * h) / Math.min(a.width * a.height, b.width * b.height);
+}
 
 export interface CleanImageOptions {
   /** Loads the MI-GAN model; omitted in the browser, where the bundled loader is used. */
@@ -36,7 +45,19 @@ export async function cleanImageData(
   // `located` is the reverse-alpha removal the rest of the pipeline builds on.
   let located = primary;
   let result: ImageDataRemovalResult = primary;
-  if (primary.meta.applied) {
+  // The catalog can "validate" a standard-size mark where there is none when the image was
+  // resized afterwards, leaving the real, smaller sparkle untouched. Cross-check with a free search.
+  const crossCheck = primary.meta.applied ? await locateMarkByTemplate(original) : null;
+  // Overriding an applied removal needs more than a match: it must sit where Gemini places the mark.
+  const misplaced = crossCheck && primary.meta.position
+    && overlap(primary.meta.position, crossCheck.position) < 0.5
+    && isGeminiPlacement(original.width, original.height, crossCheck.position)
+    ? await removeMarkAt(original, crossCheck)
+    : null;
+  if (misplaced) {
+    located = misplaced;
+    result = repairDetectedResidual(original, misplaced);
+  } else if (primary.meta.applied) {
     result = repairDetectedResidual(original, primary);
   } else {
     const panorama = tryPanoramaImageFallback(source, removeWatermarkFromImageDataSync);

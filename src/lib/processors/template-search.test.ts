@@ -1,12 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { createWatermarkEngine } from '@pilio/gemini-watermark-remover';
 import { cleanImageData } from './pipeline';
-import { locateMarkByTemplate, removeMarkByTemplateSearch } from './template-search';
+import { isGeminiPlacement, locateMarkByTemplate, removeMarkByTemplateSearch } from './template-search';
 
-/** Textured 1536x2752 image (a common Gemini 9:16 size) with an optional mark. */
-async function scene(mark?: { size: number; marginRight: number; marginBottom: number; gain: number }) {
-  const width = 1536;
-  const height = 2752;
+/** Textured image, 1536x2752 by default (a common Gemini 9:16 size), with an optional mark. */
+async function scene(mark?: { size: number; marginRight: number; marginBottom: number; gain: number }, width = 1536, height = 2752) {
   const data = new Uint8ClampedArray(width * height * 4);
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -70,4 +68,36 @@ describe('corner template search', () => {
     expect(await locateMarkByTemplate(image)).toBeNull();
     expect((await cleanImageData(image)).meta.applied).toBe(false);
   }, 60_000);
+
+  // The same photo saved at half size: the catalog "validated" a 36px mark in the wrong
+  // place and left the real 24px sparkle untouched.
+  it('removes a small mark on a shrunk image even when the catalog claims another spot', async () => {
+    const { image, clean } = await scene({ size: 24, marginRight: 44, marginBottom: 44, gain: 0.65 }, 768, 1376);
+    const result = await cleanImageData(image);
+    expect(result.meta.applied).toBe(true);
+    const left = 768 - 44 - 24;
+    const top = 1376 - 44 - 24;
+    expect(Math.abs(result.meta.position!.x - left)).toBeLessThanOrEqual(2);
+    expect(Math.abs(result.meta.position!.y - top)).toBeLessThanOrEqual(2);
+    let maxError = 0;
+    for (let y = top; y < top + 24; y += 1) {
+      for (let x = left; x < left + 24; x += 1) {
+        const index = (y * 768 + x) * 4;
+        maxError = Math.max(maxError, Math.abs(result.imageData.data[index] - clean[index]));
+      }
+    }
+    expect(maxError).toBeLessThan(16);
+  }, 60_000);
+
+  it('ignores a small sparkle shape away from where Gemini places the mark', async () => {
+    const { image } = await scene({ size: 20, marginRight: 150, marginBottom: 60, gain: 0.65 }, 768, 1376);
+    expect(await locateMarkByTemplate(image)).toBeNull();
+  }, 60_000);
+
+  it('recognises Gemini placement by equal, proportionate margins', () => {
+    expect(isGeminiPlacement(1536, 2752, { x: 1399, y: 2615, width: 48, height: 48 })).toBe(true);
+    expect(isGeminiPlacement(768, 1376, { x: 699, y: 1307, width: 25, height: 25 })).toBe(true);
+    expect(isGeminiPlacement(1000, 1000, { x: 900, y: 940, width: 20, height: 20 })).toBe(false);
+    expect(isGeminiPlacement(1000, 1000, { x: 700, y: 700, width: 20, height: 20 })).toBe(false);
+  });
 });

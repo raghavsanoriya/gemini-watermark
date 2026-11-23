@@ -21,7 +21,25 @@ export const MIN_MATCH_SCORE = 0.6;
 export const MIN_EDGE_SCORE = 0.25;
 /** After removal, the sparkle shape must be mostly gone. */
 const MAX_RESIDUAL_SCORE = 0.3;
-const MIN_SIZE = 32;
+// Small marks come from Gemini images shrunk afterwards, e.g. a 48px mark on a 1536px image saved at 768px.
+const MIN_SIZE = 16;
+/** Below this, the half-resolution template would be too coarse to match, so search at full resolution. */
+const HALF_RES_MIN_SIZE = 40;
+/**
+ * Small sparkle-like shapes are common (UI glyphs, texture), so marks below this size are only
+ * accepted where Gemini puts them: equal right and bottom margins of at most 2.5x the mark size.
+ * Gemini uses 0.67x and ~1.85x, and resizing the image keeps those ratios.
+ */
+const PLACEMENT_CHECK_BELOW = 32;
+const MAX_MARGIN_RATIO = 2.5;
+
+/** True when a mark at `position` sits where Gemini places its sparkle. */
+export function isGeminiPlacement(width: number, height: number, position: Position): boolean {
+  const right = width - position.x - position.width;
+  const bottom = height - position.y - position.height;
+  return Math.abs(right - bottom) <= Math.max(3, position.width * 0.12)
+    && Math.max(right, bottom) <= position.width * MAX_MARGIN_RATIO;
+}
 const MAX_SIZE = 112;
 
 interface Position { x: number; y: number; width: number; height: number }
@@ -105,6 +123,7 @@ function bestPosition(
   xs: [number, number],
   ys: [number, number],
   table = integrals(plane, width, height),
+  accept?: (x: number, y: number) => boolean,
 ): { x: number; y: number; score: number } {
   const { values, norm } = centered(template);
   const n = size * size;
@@ -112,6 +131,7 @@ function bestPosition(
   if (norm === 0) return best;
   for (let y = Math.max(0, ys[0]); y <= Math.min(height - size, ys[1]); y += 1) {
     for (let x = Math.max(0, xs[0]); x <= Math.min(width - size, xs[1]); x += 1) {
+      if (accept && !accept(x, y)) continue;
       const sum = table.sum(x, y, size);
       const variance = table.sq(x, y, size) - (sum * sum) / n;
       if (variance <= 1e-6) continue;
@@ -141,11 +161,20 @@ export async function locateMarkByTemplate(image: PixelImageData): Promise<Templ
   const top = image.height - region;
   const full = luminancePlane(image, left, top, region, region);
 
-  // Coarse pass at half resolution over sizes 32-112.
+  // Coarse pass: small sizes at full resolution, larger ones at half resolution.
+  const fullTable = integrals(full, region, region);
+  let coarse = { size: 0, x: 0, y: 0, score: -1 };
+  // The region is anchored to the bottom-right corner, so its own size stands in for the image's.
+  const placed = (size: number) => size < PLACEMENT_CHECK_BELOW
+    ? (x: number, y: number) => isGeminiPlacement(region, region, { x, y, width: size, height: size })
+    : undefined;
+  for (let size = MIN_SIZE; size < HALF_RES_MIN_SIZE; size += 3) {
+    const hit = bestPosition(full, region, region, await engine.getAlphaMap(size), size, [0, region], [0, region], fullTable, placed(size));
+    if (hit.score > coarse.score) coarse = { size, x: hit.x, y: hit.y, score: hit.score };
+  }
   const half = downsample2(full, region, region);
   const halfTable = integrals(half.plane, half.width, half.height);
-  let coarse = { size: 0, x: 0, y: 0, score: -1 };
-  for (let size = MIN_SIZE; size <= MAX_SIZE; size += 4) {
+  for (let size = HALF_RES_MIN_SIZE; size <= MAX_SIZE; size += 4) {
     const halfSize = Math.floor(size / 2);
     const template = downsampleTemplate(await engine.getAlphaMap(size), size).subarray(0, halfSize * halfSize);
     const hit = bestPosition(half.plane, half.width, half.height, template, halfSize, [0, half.width], [0, half.height], halfTable);
@@ -154,11 +183,10 @@ export async function locateMarkByTemplate(image: PixelImageData): Promise<Templ
   if (coarse.score < MIN_MATCH_SCORE - 0.1) return null;
 
   // Refine at full resolution around the coarse hit.
-  const fullTable = integrals(full, region, region);
   let fine = { size: coarse.size, x: coarse.x, y: coarse.y, score: -1 };
-  for (let size = coarse.size - 3; size <= coarse.size + 3; size += 1) {
+  for (let size = Math.max(MIN_SIZE - 2, coarse.size - 3); size <= coarse.size + 3; size += 1) {
     const hit = bestPosition(full, region, region, await engine.getAlphaMap(size), size,
-      [coarse.x - 4, coarse.x + 4], [coarse.y - 4, coarse.y + 4], fullTable);
+      [coarse.x - 4, coarse.x + 4], [coarse.y - 4, coarse.y + 4], fullTable, placed(size));
     if (hit.score > fine.score) fine = { size, x: hit.x, y: hit.y, score: hit.score };
   }
   if (fine.score < MIN_MATCH_SCORE) return null;
