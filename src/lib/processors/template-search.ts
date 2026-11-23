@@ -224,6 +224,32 @@ export function edgeScore(image: PixelImageData, alpha: Float32Array, position: 
   return variance > 1e-6 && template.norm > 0 ? dot / (template.norm * Math.sqrt(variance)) : 0;
 }
 
+/**
+ * Whether the original shows the sparkle at `position` at all. Real marks, even faint
+ * JPEG-softened ones, score 0.3+ on outline or 0.5+ on shape; phantom catalog matches on
+ * clean pictures score under 0.05 and 0.3.
+ */
+export async function hasMarkEvidence(image: PixelImageData, position: Position): Promise<boolean> {
+  if (position.width !== position.height || position.x < 0 || position.y < 0
+    || position.x + position.width > image.width || position.y + position.height > image.height) return true;
+  const alpha = await (await getEngine()).getAlphaMap(position.width);
+  return edgeScore(image, alpha, position) >= 0.12 || shapeScore(image, alpha, position) >= 0.35;
+}
+
+/** An outline score at or above this after removal means a visible ring is left (clean removals: ~0.05-0.22). */
+export const OUTLINE_RESIDUAL_SCORE = 0.3;
+
+/**
+ * How strongly the sparkle's outline still shows at `position` after removal. Resizing
+ * blurs a near-opaque mark's edges, and the exact reverse solve then amplifies those
+ * errors into a thin ring that the filled-shape residual check does not see.
+ */
+export async function outlineResidual(image: PixelImageData, position: Position): Promise<number> {
+  if (position.width !== position.height || position.x < 0 || position.y < 0
+    || position.x + position.width > image.width || position.y + position.height > image.height) return 0;
+  return edgeScore(image, await (await getEngine()).getAlphaMap(position.width), position);
+}
+
 function shapeScore(image: PixelImageData, alpha: Float32Array, position: Position): number {
   const plane = luminancePlane(image, position.x, position.y, position.width, position.height);
   const { values, norm } = centered(alpha);

@@ -8,7 +8,15 @@ import {
   type PixelImageData,
 } from './image-panorama-fallback';
 import { repairWithMigan, type MiganSessionFactory } from './migan-inpaint';
-import { isGeminiPlacement, locateMarkByTemplate, removeMarkAt, removeMarkByTemplateSearch } from './template-search';
+import {
+  hasMarkEvidence,
+  isGeminiPlacement,
+  locateMarkByTemplate,
+  outlineResidual,
+  OUTLINE_RESIDUAL_SCORE,
+  removeMarkAt,
+  removeMarkByTemplateSearch,
+} from './template-search';
 
 type Box = { x: number; y: number; width: number; height: number };
 
@@ -42,12 +50,21 @@ export async function cleanImageData(
     aggressiveLocatedFallback: true,
     locatedAggressiveRemoval: true,
   });
+  // The catalog can "validate" a mark where the original shows none (e.g. a 108px match on an
+  // already-clean image), and reverse-alpha then paints a dark sparkle into the picture. A real
+  // mark always leaves its outline in the original, so a detection without one is discarded.
+  const phantom = primary.meta.applied && !!primary.meta.position && !(await hasMarkEvidence(original, primary.meta.position));
+  const primaryApplied = primary.meta.applied && !phantom;
+  const untouched: ImageDataRemovalResult = {
+    imageData: { width: original.width, height: original.height, data: new Uint8ClampedArray(original.data) },
+    meta: { ...primary.meta, applied: false, skipReason: 'no-mark-evidence', position: null, size: null } as typeof primary.meta,
+  };
   // `located` is the reverse-alpha removal the rest of the pipeline builds on.
-  let located = primary;
-  let result: ImageDataRemovalResult = primary;
-  // The catalog can "validate" a standard-size mark where there is none when the image was
+  let located = primaryApplied ? primary : phantom ? untouched : primary;
+  let result: ImageDataRemovalResult = located;
+  // The catalog can also "validate" a standard-size mark in the wrong place when the image was
   // resized afterwards, leaving the real, smaller sparkle untouched. Cross-check with a free search.
-  const crossCheck = primary.meta.applied ? await locateMarkByTemplate(original) : null;
+  const crossCheck = primaryApplied ? await locateMarkByTemplate(original) : null;
   // Overriding an applied removal needs more than a match: it must sit where Gemini places the mark.
   const misplaced = crossCheck && primary.meta.position
     && overlap(primary.meta.position, crossCheck.position) < 0.5
@@ -57,11 +74,12 @@ export async function cleanImageData(
   if (misplaced) {
     located = misplaced;
     result = repairDetectedResidual(original, misplaced);
-  } else if (primary.meta.applied) {
+  } else if (primaryApplied) {
     result = repairDetectedResidual(original, primary);
   } else {
-    const panorama = tryPanoramaImageFallback(source, removeWatermarkFromImageDataSync);
-    if (panorama) {
+    const fresh = phantom ? { width: original.width, height: original.height, data: new Uint8ClampedArray(original.data) } : source;
+    const panorama = tryPanoramaImageFallback(fresh, removeWatermarkFromImageDataSync);
+    if (panorama && (!panorama.meta.position || await hasMarkEvidence(original, panorama.meta.position))) {
       result = panorama;
     } else {
       // The catalog only predicts official offsets; resized or re-cropped Gemini
@@ -78,9 +96,14 @@ export async function cleanImageData(
   // MI-GAN is the preferred content-aware repair. Telea is kept only as an
   // offline fallback for clipped/black output; for a faint leftover its smears
   // are worse than the plain reverse-alpha result.
+  const resultMeta = result.meta as ExtendedMeta;
+  const outlinePosition = resultMeta.applied && resultMeta.repairMode === 'reverse-alpha' ? resultMeta.position : null;
+  const outlineLeft = !!outlinePosition && await outlineResidual(result.imageData, outlinePosition) >= OUTLINE_RESIDUAL_SCORE;
   let migan: ImageDataRemovalResult | null = null;
   try {
-    migan = await repairWithMigan(original, reverseAlpha, result, options.miganSessionFactory);
+    migan = await repairWithMigan(original, reverseAlpha, result, options.miganSessionFactory, outlineLeft && outlinePosition
+      ? async (candidate) => await outlineResidual(candidate, outlinePosition) < OUTLINE_RESIDUAL_SCORE
+      : undefined);
   } catch (error) {
     // The optional model may be unavailable (offline, or not shipped to this host).
     options.onMiganError?.(error);

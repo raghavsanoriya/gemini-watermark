@@ -221,9 +221,15 @@ export async function repairWithMigan(
   reverseAlpha: PixelImageData,
   current: ImageDataRemovalResult,
   sessionFactory: MiganSessionFactory = browserSessionFactory,
+  /**
+   * Set when the reverse-alpha result kept a thin outline: MI-GAN then runs even though
+   * the filled-shape check saw nothing, and its fill is accepted only if this confirms
+   * the outline is gone (the outline is not a residual the proportionality test can size).
+   */
+  outlineRemoved?: (candidate: PixelImageData) => Promise<boolean>,
 ): Promise<ImageDataRemovalResult | null> {
   const meta = current.meta as ExtendedMeta;
-  if (!wantsContentAwareRepair(meta) || !meta.position) return null;
+  if (!(outlineRemoved || wantsContentAwareRepair(meta)) || !meta.position) return null;
   const mask = createMiganMask(source, reverseAlpha, meta.position);
   const window = windowForMask(source, mask);
   if (!window) return null;
@@ -239,7 +245,7 @@ export async function repairWithMigan(
   if (!(modelOutput instanceof Uint8Array)) return null;
   const candidate = compositeMiganWindow(source, mask, window, modelOutput);
   if (!isBoundedTextureRepairSafe(source, reverseAlpha, candidate, meta.position)) return null;
-  if (!isProportionateRepair(source, reverseAlpha, candidate, mask, meta.position)) return null;
+  if (outlineRemoved ? !(await outlineRemoved(candidate)) : !isProportionateRepair(source, reverseAlpha, candidate, mask, meta.position)) return null;
 
   return {
     imageData: candidate,
