@@ -16,7 +16,7 @@ import {
   outlineResidual,
   OUTLINE_RESIDUAL_SCORE,
   removeMarkAt,
-  removeMarkByTemplateSearch,
+  type TemplateMatch,
 } from './template-search';
 
 type Box = { x: number; y: number; width: number; height: number };
@@ -45,59 +45,74 @@ export async function cleanImageData(
   options: CleanImageOptions = {},
 ): Promise<ImageDataRemovalResult> {
   const original = { width: input.width, height: input.height, data: new Uint8ClampedArray(input.data) };
-  const source = { width: input.width, height: input.height, data: new Uint8ClampedArray(input.data) };
-  const primary = removeWatermarkFromImageDataSync(source, {
-    adaptiveMode: 'auto',
+  const copy = (): PixelImageData => ({ width: original.width, height: original.height, data: new Uint8ClampedArray(original.data) });
+  const runCatalog = (adaptiveMode: 'never' | 'auto') => removeWatermarkFromImageDataSync(copy(), {
+    adaptiveMode,
     aggressiveLocatedFallback: true,
     locatedAggressiveRemoval: true,
   });
-  // The catalog can "validate" a mark where the original shows none (e.g. a 108px match on an
-  // already-clean image), and reverse-alpha then paints a dark sparkle into the picture. A real
-  // mark always leaves its outline in the original, so a detection without one is discarded.
-  const phantom = primary.meta.applied && !!primary.meta.position && !(await hasMarkEvidence(original, primary.meta.position));
-  const primaryApplied = primary.meta.applied && !phantom;
-  const untouched: ImageDataRemovalResult = {
-    imageData: { width: original.width, height: original.height, data: new Uint8ClampedArray(original.data) },
-    meta: { ...primary.meta, applied: false, skipReason: 'no-mark-evidence', position: null, size: null } as typeof primary.meta,
+  // The free corner search runs at most once.
+  let searched: TemplateMatch | null | undefined;
+  const search = async () => (searched === undefined ? (searched = await locateMarkByTemplate(original)) : searched);
+
+  type Located = { located: ImageDataRemovalResult; result: ImageDataRemovalResult };
+  const fromSearch = async (match: TemplateMatch | null): Promise<Located | null> => {
+    const removed = await removeMarkAt(original, match);
+    return removed ? { located: removed, result: repairDetectedResidual(original, removed) } : null;
   };
-  // `located` is the reverse-alpha removal the rest of the pipeline builds on.
-  let located = primaryApplied ? primary : phantom ? untouched : primary;
-  let result: ImageDataRemovalResult = located;
-  // The catalog can also "validate" a standard-size mark in the wrong place when the image was
-  // resized afterwards, leaving the real, smaller sparkle untouched. Cross-check with a free search.
-  const crossCheck = primaryApplied ? await locateMarkByTemplate(original) : null;
-  // When the two disagree on where the mark is or how big it is, keep the one that explains the
-  // pixels better; overriding also needs the match to sit where Gemini places the mark.
-  const primaryBox = primary.meta.position;
-  const disagree = !!crossCheck && !!primaryBox && (
-    overlap(primaryBox, crossCheck.position) < 0.5
-    || Math.max(primaryBox.width, crossCheck.position.width) / Math.min(primaryBox.width, crossCheck.position.width) > 1.15
-  );
-  const misplaced = disagree && crossCheck && primaryBox
-    && isGeminiPlacement(original.width, original.height, crossCheck.position)
-    && crossCheck.score > (await markScore(original, primaryBox)) + 0.05
-    ? await removeMarkAt(original, crossCheck)
-    : null;
-  if (misplaced) {
-    located = misplaced;
-    result = repairDetectedResidual(original, misplaced);
-  } else if (primaryApplied) {
-    result = repairDetectedResidual(original, primary);
-  } else {
-    const fresh = phantom ? { width: original.width, height: original.height, data: new Uint8ClampedArray(original.data) } : source;
-    const panorama = tryPanoramaImageFallback(fresh, removeWatermarkFromImageDataSync);
+
+  /**
+   * Accepts a catalog removal only if the original supports it. The catalog can "validate" a
+   * mark where the picture shows none (e.g. a 108px match on an already-clean image), and the
+   * reverse solve then paints a dark sparkle in; a real mark always leaves its outline and shape.
+   * It can also "validate" a standard-size mark in the wrong place on a resized image, so the
+   * free search is consulted: if the two disagree on position or size, the better fit wins,
+   * provided the search's match sits where Gemini places the mark.
+   */
+  const acceptCatalog = async (found: ImageDataRemovalResult): Promise<Located | null> => {
+    const box = found.meta.position;
+    if (!found.meta.applied) return null;
+    if (box && !(await hasMarkEvidence(original, box))) return null;
+    const match = box ? await search() : null;
+    const disagree = !!match && !!box && (
+      overlap(box, match.position) < 0.5
+      || Math.max(box.width, match.position.width) / Math.min(box.width, match.position.width) > 1.15
+    );
+    if (disagree && match && box
+      && isGeminiPlacement(original.width, original.height, match.position)
+      && match.score > (await markScore(original, box)) + 0.05) {
+      const better = await fromSearch(match);
+      if (better) return better;
+    }
+    return { located: found, result: repairDetectedResidual(original, found) };
+  };
+
+  // Cheapest first: the catalog's known offsets (~0.2 s), then the panorama layout, then the free
+  // corner search (~1 s), and only then the library's adaptive search, which costs several seconds
+  // on a large photo and is rarely the one that finds a mark the corner search missed.
+  const quick = runCatalog('never');
+  let found = await acceptCatalog(quick);
+  let last = quick;
+  if (!found) {
+    const panorama = tryPanoramaImageFallback(copy(), removeWatermarkFromImageDataSync);
     if (panorama && (!panorama.meta.position || await hasMarkEvidence(original, panorama.meta.position))) {
-      result = panorama;
-    } else {
-      // The catalog only predicts official offsets; resized or re-cropped Gemini
-      // images need a free search of the corner.
-      const searched = await removeMarkByTemplateSearch(original);
-      if (searched) {
-        located = searched;
-        result = repairDetectedResidual(original, searched);
-      }
+      found = { located: { imageData: copy(), meta: { ...quick.meta, applied: false } as typeof quick.meta }, result: panorama };
     }
   }
+  if (!found) found = await fromSearch(await search());
+  if (!found) {
+    last = runCatalog('auto');
+    found = await acceptCatalog(last);
+  }
+  const untouched: ImageDataRemovalResult = {
+    imageData: copy(),
+    meta: last.meta.applied
+      ? { ...last.meta, applied: false, skipReason: 'no-mark-evidence', position: null, size: null } as typeof last.meta
+      : last.meta,
+  };
+  // `located` is the reverse-alpha removal the rest of the pipeline builds on.
+  const located = found?.located ?? untouched;
+  let result: ImageDataRemovalResult = found?.result ?? untouched;
   const reverseAlpha = located.imageData;
 
   // MI-GAN is the preferred content-aware repair. Telea is kept only as an
