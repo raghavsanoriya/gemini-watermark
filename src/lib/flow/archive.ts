@@ -42,6 +42,7 @@ interface ArchiveFile {
   mimeType: string;
   readText: () => Promise<string>;
   loadFile: () => Promise<File>;
+  readUncached: () => Promise<Blob>;
 }
 
 interface MetadataIndex {
@@ -219,6 +220,7 @@ export async function createFlowManifest(
       kind: info.kind,
       supported: info.supported,
       loadFile: file.loadFile,
+      readUncached: file.readUncached,
     });
   }
 
@@ -271,6 +273,8 @@ export async function importFlowZip(file: File, source?: FlowImportSource): Prom
           cached ??= entry.getData(new BlobWriter(info.mimeType)).then((blob) => makeFile(blob, path, info.mimeType));
           return cached;
         },
+        // A cached result is reused; otherwise decompress afresh and let it be collected.
+        readUncached: () => cached ?? entry.getData(new BlobWriter(info.mimeType)),
       });
     }
     return await createFlowManifest(
@@ -296,6 +300,7 @@ export async function importFlowFolder(files: File[]): Promise<FlowArchiveManife
       size: file.size,
       mimeType: info.mimeType,
       readText: () => file.text(),
+      readUncached: async () => file,
       loadFile: async () => file.type === info.mimeType
         ? file
         : makeFile(file, path, info.mimeType),
@@ -319,6 +324,7 @@ export async function importImageFiles(files: File[]): Promise<FlowArchiveManife
       size: file.size,
       mimeType: info.mimeType,
       readText: () => file.text(),
+      readUncached: async () => file,
       loadFile: async () => file.type === info.mimeType ? file : makeFile(file, path, info.mimeType),
     });
   }

@@ -1,10 +1,17 @@
-import sharp from 'sharp';
+import sharp, { type Metadata } from 'sharp';
 import { cleanImageData } from '@/lib/processors/pipeline';
 import { serverConfig } from './config';
 import { HttpError } from './http';
 import { nodeMiganSessionFactory } from './migan-node';
 
 const ACCEPTED_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+/** Formats sharp may decode here, checked from the bytes rather than the upload's label. */
+const ACCEPTED_FORMATS = new Set(['png', 'jpeg', 'webp']);
+/**
+ * Largest image the server decodes. Gemini's biggest outputs are about 17 MP (4K); a flat
+ * 40 MP PNG of ~130 KB used to take over 1 GB of memory, so the cap stays close to need.
+ */
+export const MAX_INPUT_PIXELS = 24_000_000;
 
 export interface CleanOutcome {
   applied: boolean;
@@ -25,9 +32,24 @@ export async function cleanUploadedImage(file: File): Promise<CleanOutcome> {
     throw new HttpError(413, `Server processing accepts images up to ${limit} MB. Use "This device" for larger files.`);
   }
 
+  const bytes = Buffer.from(await file.arrayBuffer());
+  let header: Metadata;
+  try {
+    // Reads the header only; the pixel count is checked below, before any decoding.
+    header = await sharp(bytes, { limitInputPixels: false }).metadata();
+  } catch {
+    throw new HttpError(422, 'This image could not be decoded.');
+  }
+  if (!header.format || !ACCEPTED_FORMATS.has(header.format)) {
+    throw new HttpError(415, 'Server processing accepts PNG, JPG, and WEBP images.');
+  }
+  if (!header.width || !header.height || header.width * header.height > MAX_INPUT_PIXELS) {
+    throw new HttpError(413, 'This image has too many pixels for server processing. Use "This device" instead.');
+  }
+
   let decoded: { data: Buffer; info: { width: number; height: number } };
   try {
-    decoded = await sharp(Buffer.from(await file.arrayBuffer()), { limitInputPixels: 40_000_000 })
+    decoded = await sharp(bytes, { limitInputPixels: MAX_INPUT_PIXELS })
       .rotate()
       .ensureAlpha()
       .raw()

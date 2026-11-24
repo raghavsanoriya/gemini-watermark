@@ -115,15 +115,17 @@ export async function cleanImageData(
     last = runCatalog('auto');
     found = await acceptCatalog(last);
   }
-  const untouched: ImageDataRemovalResult = {
+  // Built only when nothing was found: a full-size copy is ~4 bytes per pixel of memory.
+  const untouched = (): ImageDataRemovalResult => ({
     imageData: copy(),
     meta: last.meta.applied
       ? { ...last.meta, applied: false, skipReason: 'no-mark-evidence', position: null, size: null } as typeof last.meta
       : last.meta,
-  };
+  });
+  if (!found) return untouched();
   // `located` is the reverse-alpha removal the rest of the pipeline builds on.
-  const located = found?.located ?? untouched;
-  let result: ImageDataRemovalResult = found?.result ?? untouched;
+  const { located } = found;
+  let result: ImageDataRemovalResult = found.result;
   const reverseAlpha = located.imageData;
 
   // MI-GAN is the preferred content-aware repair. Telea is kept only as an

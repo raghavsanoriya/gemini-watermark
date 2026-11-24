@@ -120,7 +120,7 @@ export function FlowProjectWorkspace({ variant = 'flow' }: { variant?: 'flow' | 
       for (const asset of manifest.assets) {
         if (!active) return;
         if (asset.kind !== 'image' || !asset.supported) continue;
-        const report = await asset.loadFile().then(scanFile).catch(() => null);
+        const report = await asset.readUncached().then(scanFile).catch(() => null);
         if (!active) return;
         metaRef.current = { ...metaRef.current, [asset.id]: report };
         setMeta(metaRef.current);

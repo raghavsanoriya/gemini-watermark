@@ -5,10 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Least privilege: the build job runs third-party install scripts, so it gets read access
+# only; the deploy rights (pages: write, id-token: write) belong to the deploy job alone.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -17,6 +17,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -40,6 +43,9 @@ jobs:
           path: ./out
 
   deploy:
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

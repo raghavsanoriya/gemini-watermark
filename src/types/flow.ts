@@ -29,6 +29,8 @@ export interface FlowAsset {
   kind: FlowAssetKind;
   supported: boolean;
   loadFile: () => Promise<File>;
+  /** Reads the file without keeping it cached, for passes over every asset (the metadata scan). */
+  readUncached: () => Promise<Blob>;
 }
 
 export interface FlowProject {

@@ -1,9 +1,11 @@
 import sharp from 'sharp';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { cleanUploadedImage } from './clean';
+import { cleanUploadedImage, MAX_INPUT_PIXELS } from './clean';
 import { serverConfig } from './config';
 import { HttpError } from './http';
-import { clientAddress, resetRateLimitsForTests, takeRateLimit } from './rate-limit';
+import { positiveNumber } from './config';
+import { clientAddress, rateLimitEntryCount, resetRateLimitsForTests, takeRateLimit } from './rate-limit';
+import { readUploadedFile } from './upload';
 // @ts-expect-error The calibrated alpha maps are internal to the library; tests only use them to stamp a real mark.
 import { getEmbeddedAlphaMap } from '../../node_modules/@pilio/gemini-watermark-remover/src/core/embeddedAlphaMaps.js';
 
@@ -60,6 +62,67 @@ describe('server cleaning (in memory)', () => {
     await expect(cleanUploadedImage(big)).rejects.toMatchObject({ status: 413 });
     await expect(cleanUploadedImage(new File(['not a png'], 'bad.png', { type: 'image/png' }))).rejects.toBeInstanceOf(HttpError);
   });
+
+  it('decodes only real PNG, JPEG and WebP bytes, whatever the upload claims', async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="red"/></svg>';
+    await expect(cleanUploadedImage(new File([svg], 'x.png', { type: 'image/png' }))).rejects.toMatchObject({ status: 415 });
+    const gif = await sharp({ create: { width: 8, height: 8, channels: 3, background: '#888' } }).gif().toBuffer();
+    await expect(cleanUploadedImage(new File([new Uint8Array(gif)], 'x.png', { type: 'image/png' }))).rejects.toMatchObject({ status: 415 });
+  });
+
+  it('refuses tiny files that decode to huge images', async () => {
+    // A 40 MP flat PNG compresses to ~130 KB but needed over 1 GB of server memory.
+    const side = Math.ceil(Math.sqrt(MAX_INPUT_PIXELS)) + 16;
+    const bomb = await sharp({ create: { width: side, height: side, channels: 3, background: '#808080' } }).png({ compressionLevel: 9 }).toBuffer();
+    expect(bomb.length).toBeLessThan(serverConfig.maxUploadBytes);
+    await expect(cleanUploadedImage(new File([new Uint8Array(bomb)], 'bomb.png', { type: 'image/png' }))).rejects.toMatchObject({ status: 413 });
+  }, 60_000);
+});
+
+describe('upload body', () => {
+  const form = (bytes: Uint8Array) => {
+    const body = new FormData();
+    body.append('file', new File([bytes as Uint8Array<ArrayBuffer>], 'a.png', { type: 'image/png' }));
+    return body;
+  };
+
+  it('returns the uploaded file when the body is within the limit', async () => {
+    const file = await readUploadedFile(new Request('http://x/', { method: 'POST', body: form(new Uint8Array(1000)) }), 4096);
+    expect(file.size).toBe(1000);
+  });
+
+  it('rejects an oversized body from its declared length without reading it', async () => {
+    const request = new Request('http://x/', { method: 'POST', body: 'x', headers: { 'content-length': String(50 * 1024 * 1024), 'content-type': 'multipart/form-data; boundary=x' } });
+    await expect(readUploadedFile(request, 4096)).rejects.toMatchObject({ status: 413 });
+    expect(request.bodyUsed).toBe(false);
+  });
+
+  it('stops reading a streamed body once it passes the limit', async () => {
+    let pulled = 0;
+    const chunk = new Uint8Array(64 * 1024);
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) { pulled += 1; if (pulled > 1000) controller.close(); else controller.enqueue(chunk); },
+    });
+    const request = new Request('http://x/', {
+      method: 'POST', body: stream, headers: { 'content-type': 'multipart/form-data; boundary=x' }, duplex: 'half',
+    } as RequestInit);
+    await expect(readUploadedFile(request, 256 * 1024)).rejects.toMatchObject({ status: 413 });
+    expect(pulled).toBeLessThan(20);
+  });
+
+  it('asks for a file field', async () => {
+    const body = new FormData();
+    body.append('other', 'x');
+    await expect(readUploadedFile(new Request('http://x/', { method: 'POST', body }), 4096)).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe('server settings', () => {
+  it('falls back to the default for missing, empty, zero, negative or non-numeric values', () => {
+    expect(positiveNumber(undefined, 4)).toBe(4);
+    for (const bad of ['', '0', '-1', 'abc', '4MB', 'Infinity']) expect(positiveNumber(bad, 4)).toBe(4);
+    expect(positiveNumber('2.5', 4)).toBe(2.5);
+  });
 });
 
 describe('rate limit', () => {
@@ -71,6 +134,12 @@ describe('rate limit', () => {
     expect(takeRateLimit('1.2.3.4', start + 1000)).toBeGreaterThan(0);
     expect(takeRateLimit('5.6.7.8', start + 1000)).toBe(0);
     expect(takeRateLimit('1.2.3.4', start + serverConfig.rateLimitWindowMs)).toBe(0);
+  });
+
+  it('keeps a bounded number of addresses in memory', () => {
+    const start = 2_000_000;
+    for (let index = 0; index < 30_000; index += 1) takeRateLimit(`10.0.${index >> 8}.${index & 255}-${index}`, start);
+    expect(rateLimitEntryCount()).toBeLessThanOrEqual(10_000);
   });
 
   it('reads the client address from proxy headers', () => {

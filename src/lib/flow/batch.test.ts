@@ -19,6 +19,7 @@ function asset(id: string): FlowAsset {
     kind: 'image',
     supported: true,
     loadFile: async () => file,
+    readUncached: async () => file,
   };
 }
 

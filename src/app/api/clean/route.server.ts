@@ -1,6 +1,8 @@
 import { cleanUploadedImage } from '@/server/clean';
 import { handle, HttpError } from '@/server/http';
+import { serverConfig } from '@/server/config';
 import { clientAddress, takeRateLimit } from '@/server/rate-limit';
+import { readUploadedFile } from '@/server/upload';
 
 // Decoding, cleaning and a cold MI-GAN load can take several seconds.
 export const maxDuration = 60;
@@ -16,10 +18,7 @@ export const POST = handle(async (request: Request) => {
       'Retry-After': String(wait),
     });
   }
-  const form = await request.formData().catch(() => null);
-  const file = form?.get('file');
-  if (!(file instanceof File)) throw new HttpError(400, 'Upload an image in the "file" field.');
-
+  const file = await readUploadedFile(request, serverConfig.maxUploadBytes);
   const outcome = await cleanUploadedImage(file);
   if (!outcome.png) {
     return Response.json({ applied: false, repairMode: outcome.repairMode, message: outcome.message });
@@ -29,8 +28,8 @@ export const POST = handle(async (request: Request) => {
       'Content-Type': 'image/png',
       'Cache-Control': 'no-store',
       'X-GemClean-Repair-Mode': outcome.repairMode ?? 'reverse-alpha',
-      // Diagnostic: the AI fill could not run on this host (see server logs).
-      ...(outcome.miganError ? { 'X-GemClean-Migan-Error': outcome.miganError.replace(/[^ -~]/g, ' ').slice(0, 300) } : {}),
+      // Diagnostic flag only: the error text (which can name server paths) stays in the server log.
+      ...(outcome.miganError ? { 'X-GemClean-Migan-Error': 'unavailable' } : {}),
     },
   });
 });

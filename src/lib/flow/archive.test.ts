@@ -10,6 +10,7 @@ function archiveFile(path: string, content = 'data', type = 'application/octet-s
     mimeType: type,
     readText: () => file.text(),
     loadFile: async () => file,
+    readUncached: async () => file,
   };
 }
 
@@ -51,6 +52,21 @@ describe('Flow archive parsing', () => {
     const manifest = await importFlowZip(new File([zip], 'flow.zip', { type: 'application/zip' }));
     expect(manifest.assets[0]).toMatchObject({ name: 'asset.jpg', projectId: 'p', mimeType: 'image/jpeg' });
     expect((await manifest.assets[0].loadFile()).name).toBe('asset.jpg');
+    await manifest.dispose();
+  });
+
+  // The background metadata scan reads every image; it must not keep each decompressed entry alive.
+  it('offers an uncached read next to the cached loadFile', async () => {
+    const blobWriter = new BlobWriter('application/zip');
+    const writer = new ZipWriter(blobWriter);
+    await writer.add('media/a.png', new TextReader('image-bytes'));
+    const manifest = await importFlowZip(new File([await writer.close()], 'flow.zip', { type: 'application/zip' }));
+    const asset = manifest.assets[0];
+    const first = await asset.readUncached();
+    const second = await asset.readUncached();
+    expect(first).not.toBe(second);
+    expect(await first.text()).toBe('image-bytes');
+    expect(await asset.loadFile()).toBe(await asset.loadFile());
     await manifest.dispose();
   });
 
